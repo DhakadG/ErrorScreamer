@@ -2,7 +2,7 @@
   "name": "error-screamer",
   "displayName": "Error & Success Reactor",
   "description": "Reacts to your code with sound — screams when terminal commands fail, diagnostics spike, saves have errors, tasks fail, or debuggers crash; celebrates when commands succeed. Fully customizable per-sound settings, funny toasts, waveform viewer, DND schedule, escalation mode, and more.",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "publisher": "losthusky",
   "repository": {
     "type": "git",

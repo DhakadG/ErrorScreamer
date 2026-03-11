@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.1.1] — 2026-03-11
+
+### Added
+- Extension icon and README banner image
+
+---
+
 ## [2.1.0] — 2026-02-28
 
 ### Added
