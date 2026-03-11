@@ -17,6 +17,15 @@ builds/
 .gitignore
 .DS_Store
 
+# Internal dev / AI tooling config
+.claude/
+.vscode/
+CLAUDE.md
+TimePass.code-workspace
+
+# Exclude banner from VSIX (icon.png is needed, banner is only for README/GitHub)
+media/banner.webp
+
 # Exclude ALL node_modules except the production dependency (sound-play)
 node_modules/**
 !node_modules/sound-play/

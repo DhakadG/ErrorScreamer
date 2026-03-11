@@ -1,5 +1,9 @@
 # Error & Success Reactor 🔊
 
+<p align="center">
+  <img src="media/banner.webp" alt="Error & Success Reactor Banner" width="100%" />
+</p>
+
 > **The ultimate VS Code extension that reacts to your code with sound — screams when things go wrong, celebrates when they go right.**
 > Terminal failures, red squiggles, broken saves, failed builds, crashed debuggers — nothing escapes the scream. Successful commands get a victory sound. Fully customizable with per-sound settings, funny toasts, escalation mode, waveform viewer, DND schedule, and more.
 

@@ -12,6 +12,7 @@
     "url": "https://github.com/DhakadG/ErrorScreamer/issues"
   },
   "homepage": "https://github.com/DhakadG/ErrorScreamer#readme",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.93.0"
   },
