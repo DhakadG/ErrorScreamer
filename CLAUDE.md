@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm install          # Install dependencies
-npm test             # Run 70 unit tests (node ./test/runTest.js)
+npm test             # Run 130 unit tests (node ./test/runTest.js)
 npm run lint         # ESLint
 
 # Package as VSIX
@@ -50,7 +50,7 @@ All five trigger sources (terminal shell execution, diagnostics, save, task proc
 - Lifetime scream counter: `globalState` key `errorScreamer.lifetimeScreamCount`
 - Daily stats: `globalState`
 
-**Settings webview:** A full GUI panel (`settingsPanelInstance`) built with inline HTML/JS posted via `postMessage`. Opened via the `errorScreamer.openSettings` command.
+**Settings webview:** A full GUI panel (`settingsPanelInstance`) built with inline HTML/JS posted via `postMessage`. Opened via the `errorScreamer.openSettings` command. Uses `script-src 'unsafe-inline'` CSP (not nonce) because the webview relies on inline event handlers in dynamically generated HTML.
 
 **Tests:** `test/unit.test.js` — pure Node.js, no VS Code instance needed. `test/vscode.mock.js` provides VS Code API stubs. Run with `npm test`.
 

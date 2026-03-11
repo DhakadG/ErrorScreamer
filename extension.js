@@ -492,9 +492,9 @@ function showErrorToastMessage(cfg, detail, playedSoundId) {
   const useFunny = cfg.get("funnyToasts", true);
   if (useFunny) {
     const msg = FUNNY_TOASTS[Math.floor(Math.random() * FUNNY_TOASTS.length)];
-    vscode.window.showWarningMessage(`Error & Success Reactor [${detail}]: ${msg}`);
+    vscode.window.showWarningMessage(msg);
   } else {
-    vscode.window.showInformationMessage(`🔊 Error & Success Reactor: ${detail} — ${resolveSoundLabel(playedSoundId)}`);
+    vscode.window.showInformationMessage(`${detail} — ${resolveSoundLabel(playedSoundId)}`);
   }
 }
 
@@ -1297,6 +1297,7 @@ function getFullSettingsState() {
       randomErrorSound: cfg.get("randomErrorSound", false),
       randomSuccessSound: cfg.get("randomSuccessSound", false),
       cooldownSeconds: cfg.get("cooldownSeconds", 3),
+      successCooldownSeconds: cfg.get("successCooldownSeconds", 5),
       showErrorToast: cfg.get("showErrorToast", false),
       funnyToasts: cfg.get("funnyToasts", true),
       playOnDiagnostics: cfg.get("playOnDiagnostics", true),
@@ -1357,17 +1358,14 @@ function openSettingsPanel() {
 
   // Embed initial state directly in the HTML so the panel renders immediately
   // without relying on the "ready" → "state" message round-trip.
-  // Use a nonce-based CSP (official VS Code webview pattern) to ensure inline
-  // scripts are allowed regardless of VS Code version or security settings.
-  const nonce = getNonce();
   let initialState;
   try {
     initialState = getFullSettingsState();
   } catch (err) {
     console.error("Error & Success Reactor: failed to build initial settings state:", err);
-    initialState = { globalSettings: { enabled: true, muted: false, activeSound: "aahh", successSound: "mission-passed", randomErrorSound: false, randomSuccessSound: false, cooldownSeconds: 3, showErrorToast: false, funnyToasts: true, playOnDiagnostics: true, playOnSave: true, playOnTaskFailure: true, playOnDebuggerCrash: true, diagnosticDebounceMs: 150, doNotDisturbEnabled: false, doNotDisturbStart: "23:00", doNotDisturbEnd: "08:00", escalationEnabled: false, escalationThreshold: 3, escalationVolumeBoost: 0.2, escalationSpeedBoost: 0.3, errorPatternDetectionEnabled: false, errorPatterns: [], ignoredExitCodes: [] }, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
+    initialState = { globalSettings: { enabled: true, muted: false, activeSound: "aahh", successSound: "mission-passed", randomErrorSound: false, randomSuccessSound: false, cooldownSeconds: 3, successCooldownSeconds: 5, showErrorToast: false, funnyToasts: true, playOnDiagnostics: true, playOnSave: true, playOnTaskFailure: true, playOnDebuggerCrash: true, diagnosticDebounceMs: 150, doNotDisturbEnabled: false, doNotDisturbStart: "23:00", doNotDisturbEnd: "08:00", escalationEnabled: false, escalationThreshold: 3, escalationVolumeBoost: 0.2, escalationSpeedBoost: 0.3, errorPatternDetectionEnabled: false, errorPatterns: [], ignoredExitCodes: [] }, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
   }
-  panel.webview.html = buildSettingsPanelHtml(initialState, nonce);
+  panel.webview.html = buildSettingsPanelHtml(initialState);
 
   panel.onDidDispose(() => {
     settingsPanelInstance = null;
@@ -1491,13 +1489,13 @@ async function handleSettingsPanelMessage(panel, msg) {
  * Builds the full HTML for the settings panel webview.
  * Initial state is embedded in a non-executable JSON data block and parsed
  * by the main script on load, so the panel renders immediately.
- * Uses nonce-based CSP (the official VS Code webview pattern) to guarantee
- * that inline scripts execute regardless of VS Code version or security config.
+ * Uses 'unsafe-inline' CSP for script-src because the webview uses inline
+ * event handlers (onclick, onchange, oninput) in dynamically generated HTML.
+ * Nonce-based CSP blocks these inline handlers, breaking all interactivity.
  * @param {object} initialState - Result of getFullSettingsState()
- * @param {string} nonce - Cryptographic nonce for CSP
  * @returns {string}
  */
-function buildSettingsPanelHtml(initialState, nonce) {
+function buildSettingsPanelHtml(initialState) {
   // Embed the state in a non-executable <script type="application/json"> block.
   // Only need to escape </script> (as <\/script>) to prevent premature tag close.
   const stateJson = JSON.stringify(initialState).replace(/<\//g, "<\\/");
@@ -1505,7 +1503,7 @@ function buildSettingsPanelHtml(initialState, nonce) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
 <title>Error & Success Reactor \u2014 Settings</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1569,7 +1567,7 @@ table.st th{opacity:.55;font-weight:normal;font-size:11px}
 </style></head>
 <body><div id="root">Loading\u2026</div>
 <script type="application/json" id="initial-state">${stateJson}</script>
-<script nonce="${nonce}">
+<script>
 var vscode = acquireVsCodeApi();
 var S = JSON.parse(document.getElementById('initial-state').textContent);
 var col = {};
@@ -1637,8 +1635,9 @@ function buildGeneral(gs){
     '<hr class="sep">'+
     row('Success Sound','<select onchange="g(\'successSound\',this.value)">'+sOpts+'</select>','Play on exit code 0 (from sounds/success/)')+
     row('Random Success Sound',sw(gs.randomSuccessSound,"g('randomSuccessSound',this.checked)"),'Pick a random enabled success sound on each success')+
+    row('Success Cooldown',sl(gs.successCooldownSeconds,0,30,1,"function(v){g('successCooldownSeconds',v)}"),'Seconds between success triggers')+
     '<hr class="sep">'+
-    row('Cooldown',sl(gs.cooldownSeconds,0,30,1,"function(v){g('cooldownSeconds',v)}"),'Seconds between triggers (0=no limit)')+
+    row('Error Cooldown',sl(gs.cooldownSeconds,0,60,1,"function(v){g('cooldownSeconds',v)}"),'Seconds between error triggers (0=no limit)')+
     row('Show Error Toast',sw(gs.showErrorToast,"g('showErrorToast',this.checked)"),'Notification popup after each sound')+
     row('Funny Toasts',sw(gs.funnyToasts,"g('funnyToasts',this.checked)"),'Use funny randomized messages instead of plain info');
 }
@@ -2230,6 +2229,16 @@ if (process.env.VSCODE_UNIT_TEST === "1") {
     // Per-sound effective values (escalation applied)
     getEffectiveVolumeForSound,
     getEffectiveSpeedForSound,
+    // Settings panel
+    buildSettingsPanelHtml,
+    getFullSettingsState,
+    showErrorToastMessage,
+    openSettingsPanel,
+    handleSettingsPanelMessage,
+    // Per-sound settings
+    loadSettingsForSound,
+    saveSettingsForSound,
+    resolveSoundLabel,
     // Expose state readers for testing
     get soundPlayAvailable() {
       return !!soundPlay;

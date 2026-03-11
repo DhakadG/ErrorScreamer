@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.2.0] — 2026-03-11
+
+### Fixed
+- **Settings panel not interactive** — CSP used nonce-based `script-src` which blocked all inline event handlers (`onclick`, `onchange`, `oninput`). Switched to `'unsafe-inline'` so the webview controls actually work
+- **Toast messages cut off** — removed the verbose "Error & Success Reactor [exit N]:" prefix from toast notifications; now shows just the message content (VS Code already displays the extension source separately)
+
+### Added
+- **Success Cooldown** control in the settings panel (was a JSON-only setting before)
+- 30 new unit tests covering settings panel HTML generation, CSP correctness, state serialization, toast behavior, per-sound settings persistence, and round-trip integrity (130 total, up from 100)
+
+---
+
 ## [2.1.2] — 2026-03-11
 
 ### Changed

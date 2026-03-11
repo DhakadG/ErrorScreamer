@@ -759,6 +759,289 @@ test("pitch 5.0 (above max) is clamped to 2.0 — asetrate uses 2.0000", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildSettingsPanelHtml — settings panel rendering and CSP
+// ---------------------------------------------------------------------------
+suite("buildSettingsPanelHtml");
+
+test("is a function", () => {
+  assert.strictEqual(typeof t.buildSettingsPanelHtml, "function");
+});
+
+test("returns valid HTML string", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.strictEqual(typeof html, "string");
+  assert.ok(html.includes("<!DOCTYPE html>"), "Should start with DOCTYPE");
+  assert.ok(html.includes("</html>"), "Should end with closing html tag");
+});
+
+test("CSP uses unsafe-inline for script-src (not nonce) to allow inline event handlers", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes("script-src 'unsafe-inline'"), "CSP must allow unsafe-inline for inline onclick/onchange handlers");
+  assert.ok(!html.includes("script-src 'nonce-"), "CSP must NOT use nonce (blocks inline event handlers)");
+});
+
+test("CSP allows inline styles", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes("style-src 'unsafe-inline'"), "CSP should allow inline styles");
+});
+
+test("embeds initial state as JSON data block", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes('id="initial-state"'), "Should embed state in a script tag with id initial-state");
+  assert.ok(html.includes('type="application/json"'), "State block should be non-executable JSON type");
+});
+
+test("contains acquireVsCodeApi call", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes("acquireVsCodeApi"), "Should call acquireVsCodeApi for webview messaging");
+});
+
+test("contains all major settings sections", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes("General"), "Should have General section");
+  assert.ok(html.includes("Triggers"), "Should have Triggers section");
+  assert.ok(html.includes("Sound Library"), "Should have Sound Library section");
+  assert.ok(html.includes("Escalation"), "Should have Escalation section");
+  assert.ok(html.includes("Do Not Disturb"), "Should have DND section");
+  assert.ok(html.includes("Stats"), "Should have Stats section");
+});
+
+test("contains interactive controls (onclick, onchange)", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes("onchange="), "Should have onchange handlers for toggles/inputs");
+  assert.ok(html.includes("onclick="), "Should have onclick handlers for buttons");
+});
+
+test("renders error sound cards when sounds exist", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  // We know aahh.mp3 exists from earlier tests
+  assert.ok(html.includes("Aahh") || html.includes("aahh"), "Should render aahh sound card");
+});
+
+test("escapes </script> in embedded JSON to prevent premature tag close", () => {
+  // Create a state with a string that contains </script>
+  const state = t.getFullSettingsState();
+  state.globalSettings.activeSound = "test</script><script>alert(1)";
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(!html.includes("</script><script>alert"), "Must escape </script> in embedded JSON");
+});
+
+// ---------------------------------------------------------------------------
+// getFullSettingsState — settings state serialization
+// ---------------------------------------------------------------------------
+suite("getFullSettingsState");
+
+test("is a function", () => {
+  assert.strictEqual(typeof t.getFullSettingsState, "function");
+});
+
+test("returns object with required top-level keys", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  assert.ok(state.globalSettings, "Should have globalSettings");
+  assert.ok(Array.isArray(state.errorSounds), "Should have errorSounds array");
+  assert.ok(Array.isArray(state.successSounds), "Should have successSounds array");
+  assert.ok(Array.isArray(state.sounds), "Should have sounds array");
+  assert.ok(state.perSoundSettings, "Should have perSoundSettings object");
+  assert.ok(state.stats, "Should have stats object");
+});
+
+test("globalSettings contains all expected keys", () => {
+  t.invalidateSoundCache();
+  const gs = t.getFullSettingsState().globalSettings;
+  const expectedKeys = [
+    "enabled", "muted", "activeSound", "successSound",
+    "randomErrorSound", "randomSuccessSound", "cooldownSeconds",
+    "successCooldownSeconds", "showErrorToast", "funnyToasts",
+    "playOnDiagnostics", "playOnSave", "playOnTaskFailure",
+    "playOnDebuggerCrash", "diagnosticDebounceMs",
+    "doNotDisturbEnabled", "doNotDisturbStart", "doNotDisturbEnd",
+    "escalationEnabled", "escalationThreshold",
+    "escalationVolumeBoost", "escalationSpeedBoost",
+    "errorPatternDetectionEnabled", "errorPatterns", "ignoredExitCodes",
+  ];
+  for (const key of expectedKeys) {
+    assert.ok(key in gs, `globalSettings should contain "${key}"`);
+  }
+});
+
+test("stats object has expected fields", () => {
+  t.invalidateSoundCache();
+  const stats = t.getFullSettingsState().stats;
+  assert.strictEqual(typeof stats.todayCount, "number", "todayCount should be a number");
+  assert.strictEqual(typeof stats.currentStreak, "number", "currentStreak should be a number");
+  assert.strictEqual(typeof stats.lifetimeScreams, "number", "lifetimeScreams should be a number");
+  assert.strictEqual(typeof stats.allStats, "object", "allStats should be an object");
+});
+
+test("perSoundSettings has entry for each discovered sound", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  for (const s of state.sounds) {
+    assert.ok(s.id in state.perSoundSettings, `perSoundSettings should have entry for "${s.id}"`);
+  }
+});
+
+test("sound entries have required properties", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  for (const s of state.sounds) {
+    assert.strictEqual(typeof s.id, "string", "id should be string");
+    assert.strictEqual(typeof s.category, "string", "category should be string");
+    assert.strictEqual(typeof s.label, "string", "label should be string");
+    assert.strictEqual(typeof s.enabled, "boolean", "enabled should be boolean");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// showErrorToastMessage — toast notification behavior
+// ---------------------------------------------------------------------------
+suite("showErrorToastMessage");
+
+test("is a function", () => {
+  assert.strictEqual(typeof t.showErrorToastMessage, "function");
+});
+
+test("does not throw when soundId is undefined", () => {
+  const cfg = vscMock.workspace.getConfiguration("errorScreamer");
+  assert.doesNotThrow(() => t.showErrorToastMessage(cfg, "exit 1", undefined));
+});
+
+test("does not throw when showErrorToast is false", () => {
+  vscMock.__setOverride("showErrorToast", false);
+  const cfg = vscMock.workspace.getConfiguration("errorScreamer");
+  assert.doesNotThrow(() => t.showErrorToastMessage(cfg, "exit 1", "aahh"));
+  vscMock.__clearOverrides();
+});
+
+test("does not throw when showErrorToast is true and funnyToasts is true", () => {
+  vscMock.__setOverride("showErrorToast", true);
+  vscMock.__setOverride("funnyToasts", true);
+  const cfg = vscMock.workspace.getConfiguration("errorScreamer");
+  assert.doesNotThrow(() => t.showErrorToastMessage(cfg, "exit 1", "aahh"));
+  vscMock.__clearOverrides();
+});
+
+test("does not throw when showErrorToast is true and funnyToasts is false", () => {
+  vscMock.__setOverride("showErrorToast", true);
+  vscMock.__setOverride("funnyToasts", false);
+  const cfg = vscMock.workspace.getConfiguration("errorScreamer");
+  assert.doesNotThrow(() => t.showErrorToastMessage(cfg, "exit 1", "aahh"));
+  vscMock.__clearOverrides();
+});
+
+// ---------------------------------------------------------------------------
+// loadSettingsForSound / saveSettingsForSound
+// ---------------------------------------------------------------------------
+suite("loadSettingsForSound / saveSettingsForSound");
+
+test("loadSettingsForSound returns defaults for unknown sound", () => {
+  const settings = t.loadSettingsForSound("nonexistent_sound_xyz");
+  assert.strictEqual(settings.volume, 0.5, "Default volume should be 0.5");
+  assert.strictEqual(settings.speed, 1.0, "Default speed should be 1.0");
+  assert.strictEqual(settings.pitch, 1.0, "Default pitch should be 1.0");
+  assert.strictEqual(settings.reversePlayback, false, "Default reversePlayback should be false");
+  assert.strictEqual(settings.enabled, true, "Default enabled should be true");
+  assert.strictEqual(settings.customLabel, "", "Default customLabel should be empty");
+});
+
+test("saveSettingsForSound persists and loadSettingsForSound retrieves", async () => {
+  await t.saveSettingsForSound("__test_sound__", { volume: 0.8, speed: 2.0 });
+  const loaded = t.loadSettingsForSound("__test_sound__");
+  assert.strictEqual(loaded.volume, 0.8, "Saved volume should persist");
+  assert.strictEqual(loaded.speed, 2.0, "Saved speed should persist");
+  // Non-overridden fields keep defaults
+  assert.strictEqual(loaded.pitch, 1.0, "Non-overridden pitch should be default");
+});
+
+test("saveSettingsForSound merges partial updates", async () => {
+  await t.saveSettingsForSound("__test_merge__", { volume: 0.3, customLabel: "Test" });
+  await t.saveSettingsForSound("__test_merge__", { speed: 1.5 });
+  const loaded = t.loadSettingsForSound("__test_merge__");
+  assert.strictEqual(loaded.volume, 0.3, "Previous volume should persist after partial update");
+  assert.strictEqual(loaded.speed, 1.5, "New speed should be saved");
+  assert.strictEqual(loaded.customLabel, "Test", "Previous customLabel should persist");
+});
+
+// ---------------------------------------------------------------------------
+// resolveSoundLabel
+// ---------------------------------------------------------------------------
+suite("resolveSoundLabel");
+
+test("returns default label when no custom label is set", () => {
+  const label = t.resolveSoundLabel("aahh");
+  // Should be "Aahh" (capitalized) unless a custom label was set
+  assert.strictEqual(typeof label, "string");
+  assert.ok(label.length > 0, "Label should not be empty");
+});
+
+test("returns custom label when set", async () => {
+  await t.saveSettingsForSound("__test_label__", { customLabel: "My Custom Sound" });
+  const label = t.resolveSoundLabel("__test_label__");
+  assert.strictEqual(label, "My Custom Sound");
+});
+
+test("falls back to default label when custom label is whitespace-only", async () => {
+  await t.saveSettingsForSound("__test_ws_label__", { customLabel: "   " });
+  const label = t.resolveSoundLabel("__test_ws_label__");
+  assert.strictEqual(label, "__test_ws_label__".charAt(0).toUpperCase() + "__test_ws_label__".slice(1));
+});
+
+// ---------------------------------------------------------------------------
+// Settings panel webview — successCooldownSeconds presence
+// ---------------------------------------------------------------------------
+suite("Settings panel — successCooldownSeconds");
+
+test("getFullSettingsState includes successCooldownSeconds", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  assert.ok("successCooldownSeconds" in state.globalSettings, "globalSettings should include successCooldownSeconds");
+  assert.strictEqual(typeof state.globalSettings.successCooldownSeconds, "number");
+});
+
+test("settings panel HTML contains success cooldown control", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  assert.ok(html.includes("successCooldownSeconds"), "Webview should have successCooldownSeconds control");
+  assert.ok(html.includes("Success Cooldown"), "Webview should label the success cooldown setting");
+});
+
+// ---------------------------------------------------------------------------
+// Settings panel webview — state round-trip integrity
+// ---------------------------------------------------------------------------
+suite("Settings panel — state round-trip");
+
+test("embedded state can be parsed back from HTML", () => {
+  t.invalidateSoundCache();
+  const state = t.getFullSettingsState();
+  const html = t.buildSettingsPanelHtml(state);
+  // Extract JSON from <script type="application/json" id="initial-state">...</script>
+  const match = html.match(/<script type="application\/json" id="initial-state">([\s\S]*?)<\/script>/);
+  assert.ok(match, "Should find embedded state JSON in HTML");
+  const parsed = JSON.parse(match[1].replace(/<\\\//g, "</"));
+  assert.deepStrictEqual(Object.keys(parsed).sort(), Object.keys(state).sort(), "Parsed state keys should match original");
+  assert.strictEqual(parsed.globalSettings.enabled, state.globalSettings.enabled, "enabled should round-trip");
+  assert.strictEqual(parsed.globalSettings.activeSound, state.globalSettings.activeSound, "activeSound should round-trip");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 const total = passed + failed;
