@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.1.2] — 2026-03-11
+
+### Changed
+- Internal code improvements and dependency updates
+
+---
+
 ## [2.1.1] — 2026-03-11
 
 ### Added
