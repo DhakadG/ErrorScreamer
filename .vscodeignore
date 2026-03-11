@@ -1,0 +1,23 @@
+# Development scripts — not needed in the extension
+launch-vscode-error-screamer.sh
+launch-vscode-error-screamer.ps1
+
+# Tests — development only
+test/
+**/*.test.js
+
+# Any generated/output VSIX files that may end up here
+*.vsix
+
+# Build artifacts folder
+builds/
+
+# Git / editor artifacts
+.git
+.gitignore
+.DS_Store
+
+# Exclude ALL node_modules except the production dependency (sound-play)
+node_modules/**
+!node_modules/sound-play/
+!node_modules/sound-play/**

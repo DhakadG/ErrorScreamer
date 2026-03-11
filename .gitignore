@@ -1,0 +1,8 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (VSIX packages)
+builds/
+
+# Local VS Code workspace file
+TimePass.code-workspace

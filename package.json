@@ -1,0 +1,277 @@
+{
+  "name": "error-screamer",
+  "displayName": "Error & Success Reactor",
+  "description": "Reacts to your code with sound — screams when terminal commands fail, diagnostics spike, saves have errors, tasks fail, or debuggers crash; celebrates when commands succeed. Fully customizable per-sound settings, funny toasts, waveform viewer, DND schedule, escalation mode, and more.",
+  "version": "2.1.0",
+  "publisher": "DhakadG",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DhakadG/ErrorScreamer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DhakadG/ErrorScreamer/issues"
+  },
+  "homepage": "https://github.com/DhakadG/ErrorScreamer#readme",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "meme",
+    "sound",
+    "audio",
+    "error",
+    "alert",
+    "funny",
+    "scream",
+    "notification",
+    "terminal",
+    "diagnostic",
+    "build failure",
+    "escalation",
+    "waveform",
+    "success",
+    "reactor",
+    "celebration"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Error & Success Reactor",
+      "properties": {
+        "errorScreamer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch — enable or disable the Error & Success Reactor extension entirely."
+        },
+        "errorScreamer.muted": {
+          "type": "boolean",
+          "default": false,
+          "description": "Quick mute — suppresses all sounds without disabling the extension (streak tracking and stats still run)."
+        },
+        "errorScreamer.activeSound": {
+          "type": "string",
+          "default": "aahh",
+          "description": "The sound ID (filename without .mp3) to play when a terminal command fails. File must be in sounds/errors/."
+        },
+        "errorScreamer.successSound": {
+          "type": "string",
+          "default": "mission-passed",
+          "description": "Sound ID to play when a terminal command succeeds (exit code 0). File must be in sounds/success/. Leave empty to disable."
+        },
+        "errorScreamer.successCooldownSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 30,
+          "description": "Minimum seconds between success sound triggers. Prevents rapid-fire success sounds."
+        },
+        "errorScreamer.randomErrorSound": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, a random sound from the enabled error sounds library is picked on each error instead of the active sound."
+        },
+        "errorScreamer.randomSuccessSound": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, a random sound from the enabled success sounds library is picked on each success instead of the configured success sound."
+        },
+        "errorScreamer.cooldownSeconds": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 60,
+          "description": "Minimum number of seconds that must pass between sound triggers. Prevents rapid-fire spamming."
+        },
+        "errorScreamer.ignoredExitCodes": {
+          "type": "array",
+          "default": [],
+          "description": "List of exit codes that should never trigger the error sound (e.g. [1, 130] to ignore Ctrl+C and general errors)."
+        },
+        "errorScreamer.doNotDisturbEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the Do Not Disturb schedule to suppress sounds during certain hours."
+        },
+        "errorScreamer.doNotDisturbStart": {
+          "type": "string",
+          "default": "23:00",
+          "description": "Do Not Disturb start time in 24-hour format (HH:MM). Sounds are suppressed from this time until doNotDisturbEnd."
+        },
+        "errorScreamer.doNotDisturbEnd": {
+          "type": "string",
+          "default": "08:00",
+          "description": "Do Not Disturb end time in 24-hour format (HH:MM). Sounds resume after this time."
+        },
+        "errorScreamer.escalationEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, the sound automatically gets louder and faster as your error streak grows."
+        },
+        "errorScreamer.escalationThreshold": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "Number of consecutive errors before escalation kicks in."
+        },
+        "errorScreamer.escalationVolumeBoost": {
+          "type": "number",
+          "default": 0.2,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Volume added per escalation tier above the threshold."
+        },
+        "errorScreamer.escalationSpeedBoost": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Speed added per escalation tier above the threshold."
+        },
+        "errorScreamer.errorPatternDetectionEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, the extension also scans terminal output text for error patterns (see errorPatterns). Useful for tools that print errors but still exit with code 0. Requires VS Code 1.93+."
+        },
+        "errorScreamer.errorPatterns": {
+          "type": "array",
+          "default": [
+            "error:",
+            "Error:",
+            "ERROR:",
+            "fail:",
+            "FAIL:",
+            "Failed",
+            "fatal:",
+            "FATAL:",
+            "Exception",
+            "Traceback",
+            "command not found",
+            "No such file"
+          ],
+          "description": "Text patterns to scan terminal output for when errorPatternDetectionEnabled is true. If any pattern matches, the error sound triggers even if the command exited with code 0."
+        },
+        "errorScreamer.showErrorToast": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a brief notification toast after each error sound plays, displaying the exit code and which sound was triggered."
+        },
+        "errorScreamer.funnyToasts": {
+          "type": "boolean",
+          "default": true,
+          "description": "When showErrorToast is enabled, use funny randomized messages instead of plain info toasts."
+        },
+        "errorScreamer.playOnDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play the error sound when the number of Error-severity diagnostics (red squiggles) increases in the active file."
+        },
+        "errorScreamer.playOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play the error sound when you save a file that still has Error-severity diagnostics."
+        },
+        "errorScreamer.playOnTaskFailure": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play the error sound when a VS Code task process exits with a non-zero code."
+        },
+        "errorScreamer.playOnDebuggerCrash": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play the error sound when a debug session terminates."
+        },
+        "errorScreamer.diagnosticDebounceMs": {
+          "type": "number",
+          "default": 150,
+          "minimum": 50,
+          "maximum": 2000,
+          "description": "Milliseconds to wait after diagnostics change before checking for new errors. Prevents rapid-fire triggers while typing."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "errorScreamer.toggle",
+        "title": "Error & Success Reactor: Toggle On/Off"
+      },
+      {
+        "command": "errorScreamer.toggleMute",
+        "title": "Error & Success Reactor: Quick Mute"
+      },
+      {
+        "command": "errorScreamer.selectErrorSound",
+        "title": "Error & Success Reactor: Select Error Sound"
+      },
+      {
+        "command": "errorScreamer.testCurrentSound",
+        "title": "Error & Success Reactor: Test Current Sound"
+      },
+      {
+        "command": "errorScreamer.adjustCurrentSoundSettings",
+        "title": "Error & Success Reactor: Adjust Sound Settings (Volume / Speed / Pitch)"
+      },
+      {
+        "command": "errorScreamer.toggleRandomErrorSound",
+        "title": "Error & Success Reactor: Toggle Random Error Sound"
+      },
+      {
+        "command": "errorScreamer.toggleRandomSuccessSound",
+        "title": "Error & Success Reactor: Toggle Random Success Sound"
+      },
+      {
+        "command": "errorScreamer.toggleReverseModeForCurrentSound",
+        "title": "Error & Success Reactor: Toggle Reverse Playback for Current Sound"
+      },
+      {
+        "command": "errorScreamer.toggleCurrentSoundEnabled",
+        "title": "Error & Success Reactor: Enable/Disable Current Sound"
+      },
+      {
+        "command": "errorScreamer.editCurrentSoundLabel",
+        "title": "Error & Success Reactor: Edit Label for Current Sound"
+      },
+      {
+        "command": "errorScreamer.importSoundFile",
+        "title": "Error & Success Reactor: Import Sound File"
+      },
+      {
+        "command": "errorScreamer.openWaveformViewer",
+        "title": "Error & Success Reactor: Open Waveform Viewer"
+      },
+      {
+        "command": "errorScreamer.viewTodayErrorStats",
+        "title": "Error & Success Reactor: View Today's Error Stats"
+      },
+      {
+        "command": "errorScreamer.resetLifetimeScreamCount",
+        "title": "Error & Success Reactor: Reset Lifetime Scream Counter"
+      },
+      {
+        "command": "errorScreamer.openSettings",
+        "title": "Error & Success Reactor: Open Settings"
+      }
+    ]
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "16.x",
+    "@types/vscode": "^1.93.0",
+    "eslint": "^8.41.0"
+  },
+  "author": "lost_husky",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "sound-play": "^1.1.0"
+  }
+}
