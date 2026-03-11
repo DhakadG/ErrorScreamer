@@ -6,6 +6,7 @@ const path = require("path");
 const { exec } = require("child_process");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 
 // Fast cross-platform audio playback (no shell spawn for the common case)
 let soundPlay;
@@ -1328,6 +1329,14 @@ function getFullSettingsState() {
 }
 
 /**
+ * Returns a random nonce string for webview Content Security Policy.
+ * @returns {string}
+ */
+function getNonce() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+/**
  * Opens (or reveals) the Error & Success Reactor settings panel.
  * All settings are rendered inside a webview with live controls.
  */
@@ -1348,14 +1357,17 @@ function openSettingsPanel() {
 
   // Embed initial state directly in the HTML so the panel renders immediately
   // without relying on the "ready" → "state" message round-trip.
+  // Use a nonce-based CSP (official VS Code webview pattern) to ensure inline
+  // scripts are allowed regardless of VS Code version or security settings.
+  const nonce = getNonce();
   let initialState;
   try {
     initialState = getFullSettingsState();
   } catch (err) {
     console.error("Error & Success Reactor: failed to build initial settings state:", err);
-    initialState = { globalSettings: {}, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
+    initialState = { globalSettings: { enabled: true, muted: false, activeSound: "aahh", successSound: "mission-passed", randomErrorSound: false, randomSuccessSound: false, cooldownSeconds: 3, showErrorToast: false, funnyToasts: true, playOnDiagnostics: true, playOnSave: true, playOnTaskFailure: true, playOnDebuggerCrash: true, diagnosticDebounceMs: 150, doNotDisturbEnabled: false, doNotDisturbStart: "23:00", doNotDisturbEnd: "08:00", escalationEnabled: false, escalationThreshold: 3, escalationVolumeBoost: 0.2, escalationSpeedBoost: 0.3, errorPatternDetectionEnabled: false, errorPatterns: [], ignoredExitCodes: [] }, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
   }
-  panel.webview.html = buildSettingsPanelHtml(initialState);
+  panel.webview.html = buildSettingsPanelHtml(initialState, nonce);
 
   panel.onDidDispose(() => {
     settingsPanelInstance = null;
@@ -1477,17 +1489,23 @@ async function handleSettingsPanelMessage(panel, msg) {
 
 /**
  * Builds the full HTML for the settings panel webview.
- * Initial state is embedded directly in the HTML so the panel renders
- * immediately on load without waiting for a message round-trip.
- * The message listener handles live updates after settings are changed.
+ * Initial state is embedded in a non-executable JSON data block and parsed
+ * by the main script on load, so the panel renders immediately.
+ * Uses nonce-based CSP (the official VS Code webview pattern) to guarantee
+ * that inline scripts execute regardless of VS Code version or security config.
  * @param {object} initialState - Result of getFullSettingsState()
+ * @param {string} nonce - Cryptographic nonce for CSP
  * @returns {string}
  */
-function buildSettingsPanelHtml(initialState) {
+function buildSettingsPanelHtml(initialState, nonce) {
+  // Embed the state in a non-executable <script type="application/json"> block.
+  // Only need to escape </script> (as <\/script>) to prevent premature tag close.
+  const stateJson = JSON.stringify(initialState).replace(/<\//g, "<\\/");
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <title>Error & Success Reactor \u2014 Settings</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1550,9 +1568,10 @@ table.st th{opacity:.55;font-weight:normal;font-size:11px}
 .sm-hint{font-size:11px;opacity:.55}
 </style></head>
 <body><div id="root">Loading\u2026</div>
-<script>
+<script type="application/json" id="initial-state">${stateJson}</script>
+<script nonce="${nonce}">
 var vscode = acquireVsCodeApi();
-var S = ${JSON.stringify(initialState).replace(/<\//g, "<\\/")};
+var S = JSON.parse(document.getElementById('initial-state').textContent);
 var col = {};
 
 function post(m){ vscode.postMessage(m); }
