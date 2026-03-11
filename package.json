@@ -1,8 +1,8 @@
 {
   "name": "error-screamer",
   "displayName": "Error & Success Reactor",
-  "description": "Reacts to your code with sound — screams when terminal commands fail, diagnostics spike, saves have errors, tasks fail, or debuggers crash; celebrates when commands succeed. Fully customizable per-sound settings, funny toasts, waveform viewer, DND schedule, escalation mode, and more.",
-  "version": "2.2.0",
+  "description": "Your code misbehaves, this extension screams. Plays error sounds on terminal failures, red squiggles, failed builds, broken saves, and debugger crashes — then celebrates when you finally get it right. Customizable sounds, escalation mode, funny toasts, Do Not Disturb schedule, waveform viewer, and per-sound volume/speed/pitch controls.",
+  "version": "2.2.1",
   "publisher": "losthusky",
   "repository": {
     "type": "git",

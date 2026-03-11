@@ -5,10 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.2.1] — 2026-03-11
+
+### Changed
+- Improved Marketplace extension description for clarity and discoverability
+
+---
+
 ## [2.2.0] — 2026-03-11
 
 ### Fixed
-- **Settings panel not interactive** — CSP used nonce-based `script-src` which blocked all inline event handlers (`onclick`, `onchange`, `oninput`). Switched to `'unsafe-inline'` so the webview controls actually work
+- **Settings panel not rendering/interactive** — rewrote the entire settings webview from scratch using proper VS Code patterns: nonce-based CSP with event delegation (`data-*` attributes + `addEventListener`). Inline event handlers (`onclick`, `onchange`, `oninput`) are blocked by VS Code's nonce-based CSP; the old code used them extensively, causing the page to show "Loading..." forever. Added phased initialization with error boundaries so any future failures are visible
 - **Toast messages cut off** — removed the verbose "Error & Success Reactor [exit N]:" prefix from toast notifications; now shows just the message content (VS Code already displays the extension source separately)
 
 ### Added
