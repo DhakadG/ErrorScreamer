@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.2.2] — 2026-03-11
+
+### Changed
+- Updated extension icon
+
+---
+
 ## [2.2.1] — 2026-03-11
 
 ### Changed

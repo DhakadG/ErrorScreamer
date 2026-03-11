@@ -7,7 +7,7 @@
 > **The ultimate VS Code extension that reacts to your code with sound — screams when things go wrong, celebrates when they go right.**
 > Terminal failures, red squiggles, broken saves, failed builds, crashed debuggers — nothing escapes the scream. Successful commands get a victory sound. Fully customizable with per-sound settings, funny toasts, escalation mode, waveform viewer, DND schedule, and more.
 
-[![Version](https://img.shields.io/badge/version-2.2.1-orange?style=flat-square)](https://github.com/DhakadG/ErrorScreamer)
+[![Version](https://img.shields.io/badge/version-2.2.2-orange?style=flat-square)](https://github.com/DhakadG/ErrorScreamer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)](LICENSE.md)
 [![Tests](https://img.shields.io/badge/tests-130%2F130%20passing-brightgreen?style=flat-square)](#)
 [![VSIX Size](https://img.shields.io/badge/VSIX-360%20KB-blue?style=flat-square)](#)
@@ -48,7 +48,7 @@
 
 ### From VSIX
 
-1. Download `error-screamer-2.2.1.vsix`
+1. Download `error-screamer-2.2.2.vsix`
 2. In VS Code: `Ctrl+Shift+P` → **Extensions: Install from VSIX...**
 3. Select the file → reload VS Code
 4. Turn your speakers on and write bad code 😈
