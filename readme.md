@@ -1,15 +1,15 @@
 # Error & Success Reactor 🔊
 
 <p align="center">
-  <img src="media/banner.webp" alt="Error & Success Reactor Banner" width="100%" />
+  <img src="https://raw.githubusercontent.com/DhakadG/ErrorScreamer/main/media/banner.webp" alt="Error & Success Reactor Banner" width="100%" />
 </p>
 
 > **The ultimate VS Code extension that reacts to your code with sound — screams when things go wrong, celebrates when they go right.**
 > Terminal failures, red squiggles, broken saves, failed builds, crashed debuggers — nothing escapes the scream. Successful commands get a victory sound. Fully customizable with per-sound settings, funny toasts, escalation mode, waveform viewer, DND schedule, and more.
 
-[![Version](https://img.shields.io/badge/version-2.1.2-orange?style=flat-square)](https://github.com/DhakadG/ErrorScreamer)
+[![Version](https://img.shields.io/badge/version-2.2.0-orange?style=flat-square)](https://github.com/DhakadG/ErrorScreamer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)](LICENSE.md)
-[![Tests](https://img.shields.io/badge/tests-70%2F70%20passing-brightgreen?style=flat-square)](#)
+[![Tests](https://img.shields.io/badge/tests-130%2F130%20passing-brightgreen?style=flat-square)](#)
 [![VSIX Size](https://img.shields.io/badge/VSIX-360%20KB-blue?style=flat-square)](#)
 
 ---
@@ -48,7 +48,7 @@
 
 ### From VSIX
 
-1. Download `error-screamer-2.1.2.vsix`
+1. Download `error-screamer-2.2.0.vsix`
 2. In VS Code: `Ctrl+Shift+P` → **Extensions: Install from VSIX...**
 3. Select the file → reload VS Code
 4. Turn your speakers on and write bad code 😈
@@ -315,7 +315,7 @@ All triggers route through a shared guard chain: **enabled → muted → DND →
 ## 🧪 Testing
 
 ```bash
-npm test          # 70 unit tests
+npm test          # 130 unit tests
 npm run lint      # ESLint
 ```
 
