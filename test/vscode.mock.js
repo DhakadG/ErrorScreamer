@@ -79,3 +79,21 @@ const vscode = {
 };
 
 module.exports = vscode;
+
+// ---------------------------------------------------------------------------
+// Test helpers — allow individual test suites to set/clear config overrides
+// ---------------------------------------------------------------------------
+
+const _defaultPatterns = [
+  "error:", "Error:", "ERROR:", "fail:", "FAIL:", "Failed",
+  "fatal:", "FATAL:", "Exception", "Traceback", "command not found", "No such file",
+];
+
+module.exports.__setOverride = (key, value) => {
+  configOverrides[key] = value;
+};
+
+module.exports.__clearOverrides = () => {
+  Object.keys(configOverrides).forEach((k) => delete configOverrides[k]);
+  configOverrides.errorPatterns = [..._defaultPatterns];
+};

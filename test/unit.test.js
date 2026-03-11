@@ -480,6 +480,285 @@ test("mission-passed.mp3 is discoverable as a success sound", () => {
 });
 
 // ---------------------------------------------------------------------------
+// New suites — guard functions, streak, escalation, effective values
+// ---------------------------------------------------------------------------
+
+const vscMock = require("./vscode.mock");
+
+// ---------------------------------------------------------------------------
+// isDoNotDisturbActive
+// ---------------------------------------------------------------------------
+suite("isDoNotDisturbActive");
+
+test("returns false when DND is disabled", () => {
+  vscMock.__setOverride("doNotDisturbEnabled", false);
+  assert.strictEqual(t.isDoNotDisturbActive(), false);
+  vscMock.__clearOverrides();
+});
+
+test("returns false for malformed startStr", () => {
+  vscMock.__setOverride("doNotDisturbEnabled", true);
+  vscMock.__setOverride("doNotDisturbStart", "morning");
+  vscMock.__setOverride("doNotDisturbEnd", "08:00");
+  assert.strictEqual(t.isDoNotDisturbActive(), false);
+  vscMock.__clearOverrides();
+});
+
+test("returns false for malformed endStr", () => {
+  vscMock.__setOverride("doNotDisturbEnabled", true);
+  vscMock.__setOverride("doNotDisturbStart", "23:00");
+  vscMock.__setOverride("doNotDisturbEnd", "");
+  assert.strictEqual(t.isDoNotDisturbActive(), false);
+  vscMock.__clearOverrides();
+});
+
+test("returns false for hour out of range (25:00)", () => {
+  vscMock.__setOverride("doNotDisturbEnabled", true);
+  vscMock.__setOverride("doNotDisturbStart", "25:00");
+  vscMock.__setOverride("doNotDisturbEnd", "08:00");
+  assert.strictEqual(t.isDoNotDisturbActive(), false);
+  vscMock.__clearOverrides();
+});
+
+test("always-active overnight window (00:01 to 00:00) returns true", () => {
+  // Overnight wrap: startMinutes > endMinutes means (now >= start OR now < end)
+  // With start=00:01 (1 min) and end=00:00 (0 min): now >= 1 OR now < 0
+  // Since now is always >= 1 minute (any real time past midnight), this is always true.
+  vscMock.__setOverride("doNotDisturbEnabled", true);
+  vscMock.__setOverride("doNotDisturbStart", "00:01");
+  vscMock.__setOverride("doNotDisturbEnd", "00:00");
+  assert.strictEqual(t.isDoNotDisturbActive(), true);
+  vscMock.__clearOverrides();
+});
+
+// ---------------------------------------------------------------------------
+// isCooldownActive
+// ---------------------------------------------------------------------------
+suite("isCooldownActive");
+
+test("returns false when no sound has ever played (timestamp=0)", () => {
+  t.lastErrorSoundPlayedAt = 0;
+  // Date.now() - 0 is very large, well above any cooldown period
+  assert.strictEqual(t.isCooldownActive(), false);
+});
+
+test("returns true immediately after a sound plays", () => {
+  t.lastErrorSoundPlayedAt = Date.now();
+  assert.strictEqual(t.isCooldownActive(), true);
+});
+
+test("returns false after cooldown period expires", () => {
+  // Default cooldown is 3s; set timestamp 10s in the past
+  t.lastErrorSoundPlayedAt = Date.now() - 10000;
+  assert.strictEqual(t.isCooldownActive(), false);
+});
+
+// ---------------------------------------------------------------------------
+// isExitCodeIgnored
+// ---------------------------------------------------------------------------
+suite("isExitCodeIgnored");
+
+test("returns false when ignoredExitCodes is empty", () => {
+  vscMock.__setOverride("ignoredExitCodes", []);
+  assert.strictEqual(t.isExitCodeIgnored(1), false);
+  vscMock.__clearOverrides();
+});
+
+test("returns true when exit code is in ignored list", () => {
+  vscMock.__setOverride("ignoredExitCodes", [1, 130]);
+  assert.strictEqual(t.isExitCodeIgnored(1), true);
+  assert.strictEqual(t.isExitCodeIgnored(130), true);
+  vscMock.__clearOverrides();
+});
+
+test("returns false for non-listed exit code", () => {
+  vscMock.__setOverride("ignoredExitCodes", [1, 130]);
+  assert.strictEqual(t.isExitCodeIgnored(2), false);
+  vscMock.__clearOverrides();
+});
+
+// ---------------------------------------------------------------------------
+// incrementErrorStreak / resetErrorStreak
+// ---------------------------------------------------------------------------
+suite("incrementErrorStreak / resetErrorStreak");
+
+test("incrementErrorStreak increases streak by 1", () => {
+  t.currentErrorStreak = 0;
+  t.incrementErrorStreak();
+  assert.strictEqual(t.currentErrorStreak, 1);
+});
+
+test("incrementErrorStreak is cumulative across multiple calls", () => {
+  t.currentErrorStreak = 0;
+  t.incrementErrorStreak();
+  t.incrementErrorStreak();
+  t.incrementErrorStreak();
+  assert.strictEqual(t.currentErrorStreak, 3);
+});
+
+test("resetErrorStreak sets streak to 0", () => {
+  t.currentErrorStreak = 5;
+  t.resetErrorStreak();
+  assert.strictEqual(t.currentErrorStreak, 0);
+});
+
+// ---------------------------------------------------------------------------
+// calculateEscalationTier
+// ---------------------------------------------------------------------------
+suite("calculateEscalationTier");
+
+test("returns 0 when escalation is disabled", () => {
+  vscMock.__setOverride("escalationEnabled", false);
+  t.currentErrorStreak = 10;
+  assert.strictEqual(t.calculateEscalationTier(), 0);
+  vscMock.__clearOverrides();
+});
+
+test("returns 0 when streak is below threshold", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  t.currentErrorStreak = 2;
+  assert.strictEqual(t.calculateEscalationTier(), 0);
+  vscMock.__clearOverrides();
+});
+
+test("returns 0 at exactly the threshold", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  t.currentErrorStreak = 3;
+  // tier = max(0, 3 - 3) = 0
+  assert.strictEqual(t.calculateEscalationTier(), 0);
+  vscMock.__clearOverrides();
+});
+
+test("returns 1 when one above threshold", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  t.currentErrorStreak = 4;
+  assert.strictEqual(t.calculateEscalationTier(), 1);
+  vscMock.__clearOverrides();
+});
+
+test("returns 5 when five above threshold", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  t.currentErrorStreak = 8;
+  assert.strictEqual(t.calculateEscalationTier(), 5);
+  vscMock.__clearOverrides();
+});
+
+// ---------------------------------------------------------------------------
+// getEffectiveVolumeForSound
+// ---------------------------------------------------------------------------
+suite("getEffectiveVolumeForSound");
+
+test("returns base volume when escalation is disabled", () => {
+  vscMock.__setOverride("escalationEnabled", false);
+  t.currentErrorStreak = 0;
+  const vol = t.getEffectiveVolumeForSound("aahh");
+  assert.ok(vol > 0 && vol <= 1.0, `Volume ${vol} should be in (0, 1.0]`);
+  vscMock.__clearOverrides();
+});
+
+test("adds escalation boost when tier > 0", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  vscMock.__setOverride("escalationVolumeBoost", 0.2);
+  t.currentErrorStreak = 4; // tier = 1
+  const baseVol = (() => {
+    vscMock.__setOverride("escalationEnabled", false);
+    const v = t.getEffectiveVolumeForSound("aahh");
+    vscMock.__setOverride("escalationEnabled", true);
+    return v;
+  })();
+  const boostedVol = t.getEffectiveVolumeForSound("aahh");
+  assert.ok(boostedVol > baseVol, `Boosted volume ${boostedVol} should exceed base ${baseVol}`);
+  vscMock.__clearOverrides();
+});
+
+test("clamps volume at 1.0 maximum with very high streak", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 1);
+  vscMock.__setOverride("escalationVolumeBoost", 0.3);
+  t.currentErrorStreak = 100; // tier = 99, boost would far exceed 1.0
+  const vol = t.getEffectiveVolumeForSound("aahh");
+  assert.strictEqual(vol, 1.0);
+  vscMock.__clearOverrides();
+});
+
+// ---------------------------------------------------------------------------
+// getEffectiveSpeedForSound
+// ---------------------------------------------------------------------------
+suite("getEffectiveSpeedForSound");
+
+test("returns base speed when escalation is disabled", () => {
+  vscMock.__setOverride("escalationEnabled", false);
+  t.currentErrorStreak = 0;
+  const spd = t.getEffectiveSpeedForSound("aahh");
+  assert.ok(spd >= 0.5 && spd <= 4.0, `Speed ${spd} should be in [0.5, 4.0]`);
+  vscMock.__clearOverrides();
+});
+
+test("adds escalation speed boost when tier > 0", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  vscMock.__setOverride("escalationSpeedBoost", 0.3);
+  t.currentErrorStreak = 4; // tier = 1, boost = 0.3
+  const spd = t.getEffectiveSpeedForSound("aahh");
+  assert.ok(spd > 1.0, `Speed ${spd} should be above default 1.0 when boosted`);
+  vscMock.__clearOverrides();
+});
+
+test("clamps speed at 4.0 maximum with very high streak", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 1);
+  vscMock.__setOverride("escalationSpeedBoost", 1.0);
+  t.currentErrorStreak = 100;
+  const spd = t.getEffectiveSpeedForSound("aahh");
+  assert.strictEqual(spd, 4.0);
+  vscMock.__clearOverrides();
+});
+
+test("speed result is always >= 0.5", () => {
+  vscMock.__setOverride("escalationEnabled", true);
+  vscMock.__setOverride("escalationThreshold", 3);
+  vscMock.__setOverride("escalationSpeedBoost", 0);
+  t.currentErrorStreak = 0;
+  const spd = t.getEffectiveSpeedForSound("aahh");
+  assert.ok(spd >= 0.5, `Speed ${spd} must be >= 0.5`);
+  vscMock.__clearOverrides();
+});
+
+// ---------------------------------------------------------------------------
+// buildFfmpegAudioFilterChain — clamp edge cases (FIX 8)
+// ---------------------------------------------------------------------------
+suite("buildFfmpegAudioFilterChain — clamp edge cases");
+
+test("speed 0.1 (below min) is clamped to 0.5 — no throw, returns string", () => {
+  const chain = t.buildFfmpegAudioFilterChain(0.1, 1.0, false);
+  assert.strictEqual(typeof chain, "string", "Should return a string, not throw");
+  assert.ok(chain.includes("atempo"), "Clamped speed 0.5 should still emit atempo");
+});
+
+test("speed 10.0 (above max) is clamped to 4.0 — uses chained atempo=2.0", () => {
+  const chain = t.buildFfmpegAudioFilterChain(10.0, 1.0, false);
+  assert.strictEqual(typeof chain, "string");
+  assert.ok(chain.includes("atempo=2.0"), "Max speed 4.0 should chain atempo=2.0 filters");
+});
+
+test("pitch 0.1 (below min) is clamped to 0.5 — produces asetrate", () => {
+  const chain = t.buildFfmpegAudioFilterChain(1.0, 0.1, false);
+  assert.strictEqual(typeof chain, "string");
+  assert.ok(chain.includes("asetrate"), "Clamped pitch should still produce asetrate filter");
+});
+
+test("pitch 5.0 (above max) is clamped to 2.0 — asetrate uses 2.0000", () => {
+  const chain = t.buildFfmpegAudioFilterChain(1.0, 5.0, false);
+  assert.strictEqual(typeof chain, "string");
+  assert.ok(chain.includes("asetrate=44100*2.0000"), "Clamped pitch at 2.0 should appear in filter");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 const total = passed + failed;

@@ -6,3 +6,6 @@ builds/
 
 # Local VS Code workspace file
 TimePass.code-workspace
+
+# Claude Code local data (plans, memory, session settings — machine-specific)
+.claude/

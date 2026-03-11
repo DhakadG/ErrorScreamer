@@ -44,6 +44,15 @@ let statusBarItem;
 /** Settings webview panel instance — null when the panel is closed. */
 let settingsPanelInstance = null;
 
+/** Timer handle for the deferred initial state push to the settings panel. */
+let _settingsPanelTimer = null;
+
+/** Pending daily stat increments awaiting microtask flush. */
+let _pendingStatIncrement = 0;
+
+/** Whether a daily stat flush microtask is already scheduled. */
+let _statFlushScheduled = false;
+
 /** Per-category sound discovery caches. Invalidated after SOUND_CACHE_TTL_MS. */
 const soundCache = { errors: null, success: null, errorsTs: 0, successTs: 0 };
 const SOUND_CACHE_TTL_MS = 2000;
@@ -329,6 +338,10 @@ function onDiagnosticsChanged(event) {
   // Debounce: clear any pending check and schedule a new one
   if (diagnosticDebounceTimeout) clearTimeout(diagnosticDebounceTimeout);
 
+  // Capture baseline NOW (before the 150ms delay) so concurrent editor switches
+  // or additional diagnostic events don't mutate the comparison value mid-flight.
+  const baselineAtDebounceStart = previousDiagnosticErrorCount;
+
   diagnosticDebounceTimeout = setTimeout(() => {
     diagnosticDebounceTimeout = null;
 
@@ -346,8 +359,8 @@ function onDiagnosticsChanged(event) {
 
     const errorCount = diagnostics.filter((d) => d.severity === vscode.DiagnosticSeverity.Error).length;
 
-    // Only trigger when errors INCREASE (not on fixes)
-    if (errorCount > previousDiagnosticErrorCount && previousDiagnosticErrorCount >= 0) {
+    // Only trigger when errors INCREASE compared to the baseline captured at debounce start
+    if (errorCount > baselineAtDebounceStart && baselineAtDebounceStart >= 0) {
       triggerErrorSoundFromSource("diagnostics");
     }
 
@@ -366,12 +379,12 @@ function onActiveEditorChanged(editor) {
   if (uri !== lastActiveEditorUri) {
     lastActiveEditorUri = uri;
 
-    // Recalculate baseline for the new file
+    // Recalculate baseline for the new file.
+    // When editor is null/undefined (all tabs closed) do NOT reset to 0 — resetting
+    // causes false triggers the next time any file opens with pre-existing errors.
     if (editor && vscode.languages.getDiagnostics) {
       const diagnostics = vscode.languages.getDiagnostics(editor.document.uri) || [];
       previousDiagnosticErrorCount = diagnostics.filter((d) => d.severity === vscode.DiagnosticSeverity.Error).length;
-    } else {
-      previousDiagnosticErrorCount = 0;
     }
   }
 }
@@ -871,8 +884,7 @@ function executeSoundPlayback(soundFilePath, volume, speed, pitch, reverse) {
   // use it directly — no shell spawn, ~50-100ms latency vs ~700ms with PowerShell.
   if (!needsProcessing && soundPlay) {
     soundPlay.play(soundFilePath, volume).catch((err) => {
-      console.error("Error & Success Reactor: sound-play failed, falling back to exec:", err.message);
-      // Fallback to platform-specific exec if sound-play fails
+      console.error("Error & Success Reactor: sound-play (fast path) failed, trying exec fallback:", err.message);
       executeSoundPlaybackViaExec(soundFilePath, volume, speed, pitch, reverse);
     });
     return;
@@ -901,7 +913,7 @@ function executeSoundPlaybackViaExec(soundFilePath, volume, speed, pitch, revers
 
     exec(command, (err) => {
       if (err) {
-        console.error("Error & Success Reactor: playback command failed:", err.message);
+        console.error("Error & Success Reactor: exec playback (slow path) also failed:", err.message);
       }
     });
   } catch (err) {
@@ -1027,6 +1039,11 @@ function buildLinuxPlaybackCommand(filePath, volume, speed, pitch, reverse) {
  * @returns {string}  e.g. "areverse,asetrate=44100*1.5,aresample=44100,atempo=1.5"
  */
 function buildFfmpegAudioFilterChain(speed, pitch, reverse) {
+  // Defense-in-depth: clamp values to valid ffmpeg filter ranges even if the
+  // caller already validated them, to guard against corrupted per-sound state.
+  speed = Math.min(4.0, Math.max(0.5, speed));
+  pitch = Math.min(2.0, Math.max(0.5, pitch));
+
   const filters = [];
 
   if (reverse) {
@@ -1116,6 +1133,18 @@ function isDoNotDisturbActive() {
 
   const [startH, startM] = startStr.split(":").map(Number);
   const [endH, endM] = endStr.split(":").map(Number);
+
+  // Validate parsed values — malformed config (e.g. "morning", "25:00") produces NaN,
+  // which causes all comparisons to silently return false, wrongly disabling DND.
+  const validStart = Number.isFinite(startH) && startH >= 0 && startH <= 23 &&
+                     Number.isFinite(startM) && startM >= 0 && startM <= 59;
+  const validEnd   = Number.isFinite(endH)   && endH   >= 0 && endH   <= 23 &&
+                     Number.isFinite(endM)    && endM   >= 0 && endM   <= 59;
+  if (!validStart || !validEnd) {
+    console.warn("Error & Success Reactor: malformed DND time config — DND disabled.");
+    return false;
+  }
+
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
 
@@ -1203,12 +1232,27 @@ function getTodayDateString() {
 
 /**
  * Increments today's error count in global state.
+ * Uses a micro-task coalescing pattern to avoid race conditions when called
+ * multiple times in rapid succession (both callers are fire-and-forget).
+ * All increments within a single event-loop tick are batched into one write.
  */
-async function recordErrorOccurredToday() {
-  const stats = extensionCtx.globalState.get(DAILY_STATS_KEY, {});
-  const today = getTodayDateString();
-  stats[today] = (stats[today] || 0) + 1;
-  await extensionCtx.globalState.update(DAILY_STATS_KEY, stats);
+function recordErrorOccurredToday() {
+  _pendingStatIncrement++;
+  if (!_statFlushScheduled) {
+    _statFlushScheduled = true;
+    Promise.resolve().then(async () => {
+      const count = _pendingStatIncrement;
+      _pendingStatIncrement = 0;
+      _statFlushScheduled = false;
+      if (!extensionCtx) return;
+      const stats = extensionCtx.globalState.get(DAILY_STATS_KEY, {});
+      const today = getTodayDateString();
+      stats[today] = (stats[today] || 0) + count;
+      await extensionCtx.globalState.update(DAILY_STATS_KEY, stats).catch(
+        (err) => console.error("Error & Success Reactor: failed to update daily stats:", err)
+      );
+    });
+  }
 }
 
 /**
@@ -1303,9 +1347,14 @@ function openSettingsPanel() {
   panel.webview.html = buildSettingsPanelHtml();
   panel.onDidDispose(() => {
     settingsPanelInstance = null;
+    if (_settingsPanelTimer) {
+      clearTimeout(_settingsPanelTimer);
+      _settingsPanelTimer = null;
+    }
   });
   // Proactively push state in case the webview's "ready" message fired before the listener attached
-  setTimeout(() => {
+  _settingsPanelTimer = setTimeout(() => {
+    _settingsPanelTimer = null;
     if (settingsPanelInstance === panel) {
       panel.webview.postMessage({ type: "state", data: getFullSettingsState() });
     }
@@ -1359,7 +1408,12 @@ async function handleSettingsPanelMessage(panel, msg) {
       if (!fs.existsSync(fp)) break;
       const confirm = await vscode.window.showWarningMessage('Delete "' + msg.soundId + '.mp3" permanently from sounds/' + cat + "/?", { modal: true }, "Delete");
       if (confirm === "Delete") {
-        fs.unlinkSync(fp);
+        try {
+          fs.unlinkSync(fp);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Error & Success Reactor: Could not delete "${msg.soundId}.mp3" — ${err.message}`);
+          break;
+        }
         invalidateSoundCache();
         if (cat === "errors") {
           const remaining = discoverErrorSounds();
@@ -1805,7 +1859,12 @@ async function showImportSoundFilePicker() {
     if (overwrite !== "Overwrite") return;
   }
 
-  fs.copyFileSync(sourcePath, destPath);
+  try {
+    fs.copyFileSync(sourcePath, destPath);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Error & Success Reactor: Failed to import "${filename}" — ${err.message}`);
+    return;
+  }
   invalidateSoundCache();
   const soundId = filename.replace(/\.mp3$/i, "");
   const label = category === "errors" ? "Error" : "Success";
@@ -2129,6 +2188,17 @@ if (process.env.VSCODE_UNIT_TEST === "1") {
     discoverErrorSounds,
     discoverSuccessSounds,
     FUNNY_TOASTS,
+    // Guard functions
+    isDoNotDisturbActive,
+    isCooldownActive,
+    isExitCodeIgnored,
+    // Streak and escalation
+    incrementErrorStreak,
+    resetErrorStreak,
+    calculateEscalationTier,
+    // Per-sound effective values (escalation applied)
+    getEffectiveVolumeForSound,
+    getEffectiveSpeedForSound,
     // Expose state readers for testing
     get soundPlayAvailable() {
       return !!soundPlay;
@@ -2136,5 +2206,10 @@ if (process.env.VSCODE_UNIT_TEST === "1") {
     get lifetimeScreamCount() {
       return getLifetimeScreamCount();
     },
+    // Settable state for test setup
+    get currentErrorStreak() { return currentErrorStreak; },
+    set currentErrorStreak(v) { currentErrorStreak = v; },
+    get lastErrorSoundPlayedAt() { return lastErrorSoundPlayedAt; },
+    set lastErrorSoundPlayedAt(v) { lastErrorSoundPlayedAt = v; },
   };
 }
