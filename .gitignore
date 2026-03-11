@@ -7,5 +7,9 @@ builds/
 # Local VS Code workspace file
 TimePass.code-workspace
 
-# Claude Code local data (plans, memory, session settings — machine-specific)
+# Claude Code files — AI tooling, machine-specific, not for the repo
 .claude/
+CLAUDE.md
+
+# VS Code local IDE config — machine-specific, not for contributors
+.vscode/
