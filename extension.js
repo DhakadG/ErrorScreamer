@@ -44,9 +44,6 @@ let statusBarItem;
 /** Settings webview panel instance — null when the panel is closed. */
 let settingsPanelInstance = null;
 
-/** Timer handle for the deferred initial state push to the settings panel. */
-let _settingsPanelTimer = null;
-
 /** Pending daily stat increments awaiting microtask flush. */
 let _pendingStatIncrement = 0;
 
@@ -1337,28 +1334,32 @@ function getFullSettingsState() {
 function openSettingsPanel() {
   if (settingsPanelInstance) {
     settingsPanelInstance.reveal(vscode.ViewColumn.One);
-    settingsPanelInstance.webview.postMessage({ type: "state", data: getFullSettingsState() });
+    // Push a fresh state to the already-open panel
+    try {
+      settingsPanelInstance.webview.postMessage({ type: "state", data: getFullSettingsState() });
+    } catch (err) {
+      console.error("Error & Success Reactor: failed to refresh settings panel:", err);
+    }
     return;
   }
   const panel = vscode.window.createWebviewPanel("errorScreamerSettings", "Error & Success Reactor \u2014 Settings", vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
   settingsPanelInstance = panel;
-  // Register message handler BEFORE setting HTML to avoid losing the initial "ready" message
   panel.webview.onDidReceiveMessage((msg) => handleSettingsPanelMessage(panel, msg));
-  panel.webview.html = buildSettingsPanelHtml();
+
+  // Embed initial state directly in the HTML so the panel renders immediately
+  // without relying on the "ready" → "state" message round-trip.
+  let initialState;
+  try {
+    initialState = getFullSettingsState();
+  } catch (err) {
+    console.error("Error & Success Reactor: failed to build initial settings state:", err);
+    initialState = { globalSettings: {}, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
+  }
+  panel.webview.html = buildSettingsPanelHtml(initialState);
+
   panel.onDidDispose(() => {
     settingsPanelInstance = null;
-    if (_settingsPanelTimer) {
-      clearTimeout(_settingsPanelTimer);
-      _settingsPanelTimer = null;
-    }
   });
-  // Proactively push state in case the webview's "ready" message fired before the listener attached
-  _settingsPanelTimer = setTimeout(() => {
-    _settingsPanelTimer = null;
-    if (settingsPanelInstance === panel) {
-      panel.webview.postMessage({ type: "state", data: getFullSettingsState() });
-    }
-  }, 200);
 }
 
 /**
@@ -1368,10 +1369,18 @@ function openSettingsPanel() {
  */
 async function handleSettingsPanelMessage(panel, msg) {
   const cfg = vscode.workspace.getConfiguration("errorScreamer");
-  const refresh = () => panel.webview.postMessage({ type: "state", data: getFullSettingsState() });
+  const refresh = () => {
+    try {
+      panel.webview.postMessage({ type: "state", data: getFullSettingsState() });
+    } catch (err) {
+      console.error("Error & Success Reactor: settings panel refresh failed:", err);
+    }
+  };
 
   switch (msg.type) {
     case "ready":
+      // "ready" is no longer used for the initial load (state is embedded in HTML),
+      // but kept here for compatibility in case the webview sends it.
       refresh();
       break;
     case "saveGlobal":
@@ -1468,12 +1477,13 @@ async function handleSettingsPanelMessage(panel, msg) {
 
 /**
  * Builds the full HTML for the settings panel webview.
- * Client-side JS (no framework) handles all rendering. On load the webview
- * posts a "ready" message; the extension host responds with the full state
- * via postMessage, which triggers the first render.
+ * Initial state is embedded directly in the HTML so the panel renders
+ * immediately on load without waiting for a message round-trip.
+ * The message listener handles live updates after settings are changed.
+ * @param {object} initialState - Result of getFullSettingsState()
  * @returns {string}
  */
-function buildSettingsPanelHtml() {
+function buildSettingsPanelHtml(initialState) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -1542,7 +1552,7 @@ table.st th{opacity:.55;font-weight:normal;font-size:11px}
 <body><div id="root">Loading\u2026</div>
 <script>
 var vscode = acquireVsCodeApi();
-var S = null;
+var S = ${JSON.stringify(initialState).replace(/<\//g, "<\\/")};
 var col = {};
 
 function post(m){ vscode.postMessage(m); }
@@ -1730,8 +1740,10 @@ window.addEventListener('message',function(ev){
     catch(e){ document.getElementById('root').innerHTML='<div style="padding:20px;color:#e05252;font-family:monospace;font-size:12px"><b>Render error:</b><br><br>'+String(e)+'<br><br>'+(e.stack||'')+'</div>'; }
   }
 });
-// Ask the extension host for state — avoids embedding JSON in template literal
-vscode.postMessage({type:'ready'});
+// Render immediately from the state embedded at HTML-build time.
+// The message listener above handles live updates after settings are saved.
+try{ render(); }
+catch(e){ document.getElementById('root').innerHTML='<div style="padding:20px;color:#e05252;font-family:monospace;font-size:12px"><b>Render error:</b><br><br>'+String(e)+'<br><br>'+(e.stack||'')+'</div>'; }
 </script></body></html>`;
 }
 
