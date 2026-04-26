@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [2.3.0] — 2026-04-26
+
+### Fixed
+- **Per-sound audio settings not applying reliably from the settings panel** — Range slider drags (volume, speed, pitch) would intermittently revert or appear not to take effect. Root cause: every `input` event on a slider triggered a full state refresh that destroyed and recreated the entire settings panel DOM while the slider was still being dragged, causing the drag target element to disappear mid-gesture. Fixed by suppressing the re-render during slider drag (`noRefresh` flag) and letting the single correct re-render happen on `mouseup` via the `change` event.
+- **Sound label and enabled-state changes taking up to 2 seconds to appear in the UI** — `saveSettingsForSound()` did not invalidate the 2-second sound discovery cache after writing to `globalState`, so the sound list served stale `label`/`enabled` values for the full TTL window. Fixed by calling `invalidateSoundCache()` immediately after each save.
+
+### Added
+- 6 new error sounds: `error - ultrakill-explosion`, `error - ankle-breakage`, `error - core-sound-effect`, `error - critical-hit-sounds-effect`, `error - weird smoosh effect`, `makabhosda_aag`
+- 4 new success sounds: `success - cartel-song`, `success - fast and furious tokyo drift`, `success - tu-tu-tu-du-max-verstappen`, `success - white-tee-rizz`
+
+---
+
 ## [2.2.3] — 2026-03-11
 
 ### Changed

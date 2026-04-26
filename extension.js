@@ -759,6 +759,9 @@ async function saveSettingsForSound(soundId, partialSettings) {
   const all = loadAllPerSoundSettings();
   all[soundId] = Object.assign(loadSettingsForSound(soundId), partialSettings);
   await extensionCtx.globalState.update(PER_SOUND_SETTINGS_KEY, all);
+  // Invalidate the sound discovery cache so label/enabled changes are
+  // reflected immediately instead of waiting for the 2-second TTL to expire.
+  invalidateSoundCache();
 }
 
 /**
@@ -1358,6 +1361,7 @@ function openSettingsPanel() {
 
   // Embed initial state directly in the HTML so the panel renders immediately
   // without relying on the "ready" → "state" message round-trip.
+  const nonce = getNonce();
   let initialState;
   try {
     initialState = getFullSettingsState();
@@ -1365,7 +1369,7 @@ function openSettingsPanel() {
     console.error("Error & Success Reactor: failed to build initial settings state:", err);
     initialState = { globalSettings: { enabled: true, muted: false, activeSound: "aahh", successSound: "mission-passed", randomErrorSound: false, randomSuccessSound: false, cooldownSeconds: 3, successCooldownSeconds: 5, showErrorToast: false, funnyToasts: true, playOnDiagnostics: true, playOnSave: true, playOnTaskFailure: true, playOnDebuggerCrash: true, diagnosticDebounceMs: 150, doNotDisturbEnabled: false, doNotDisturbStart: "23:00", doNotDisturbEnd: "08:00", escalationEnabled: false, escalationThreshold: 3, escalationVolumeBoost: 0.2, escalationSpeedBoost: 0.3, errorPatternDetectionEnabled: false, errorPatterns: [], ignoredExitCodes: [] }, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
   }
-  panel.webview.html = buildSettingsPanelHtml(initialState);
+  panel.webview.html = buildSettingsPanelHtml(initialState, nonce);
 
   panel.onDidDispose(() => {
     settingsPanelInstance = null;
@@ -1406,7 +1410,11 @@ async function handleSettingsPanelMessage(panel, msg) {
       break;
     case "savePerSound":
       await saveSettingsForSound(msg.soundId, { [msg.key]: msg.value });
-      refresh();
+      // noRefresh is set by the range slider 'input' event handler to prevent
+      // the DOM being rebuilt mid-drag, which caused settings to appear not to
+      // take effect. The 'change' event (mouseup) sends the same message
+      // without noRefresh, triggering the single correct re-render on release.
+      if (!msg.noRefresh) refresh();
       break;
     case "testSound": {
       const cat = msg.category || "errors";
@@ -1487,23 +1495,22 @@ async function handleSettingsPanelMessage(panel, msg) {
 
 /**
  * Builds the full HTML for the settings panel webview.
- * Initial state is embedded in a non-executable JSON data block and parsed
- * by the main script on load, so the panel renders immediately.
- * Uses 'unsafe-inline' CSP for script-src because the webview uses inline
- * event handlers (onclick, onchange, oninput) in dynamically generated HTML.
- * Nonce-based CSP blocks these inline handlers, breaking all interactivity.
+ * Uses nonce-based CSP with event delegation (NO inline event handlers).
+ * Inline onclick/onchange/oninput are blocked by nonce CSP; all interactivity
+ * is wired via addEventListener on the document with data-* attributes.
+ * Initialization is phased with error boundaries so failures are visible.
  * @param {object} initialState - Result of getFullSettingsState()
+ * @param {string} [nonce] - Cryptographic nonce for CSP (generated if omitted)
  * @returns {string}
  */
-function buildSettingsPanelHtml(initialState) {
-  // Embed the state in a non-executable <script type="application/json"> block.
-  // Only need to escape </script> (as <\/script>) to prevent premature tag close.
+function buildSettingsPanelHtml(initialState, nonce) {
+  if (!nonce) nonce = getNonce();
   const stateJson = JSON.stringify(initialState).replace(/<\//g, "<\\/");
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <title>Error & Success Reactor \u2014 Settings</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1564,205 +1571,346 @@ table.st th{opacity:.55;font-weight:normal;font-size:11px}
 .dnd-on{font-size:11px;color:#f0a050;margin-top:5px}.dnd-off{font-size:11px;color:#86c987;margin-top:5px}
 .ibar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
 .sm-hint{font-size:11px;opacity:.55}
+.phase-err{padding:20px;color:#e05252;font-family:monospace;font-size:12px;white-space:pre-wrap}
 </style></head>
-<body><div id="root">Loading\u2026</div>
+<body>
+<div id="root"><div style="padding:40px 20px;opacity:.6">Phase 1 OK \u2014 HTML loaded. Waiting for script\u2026</div></div>
 <script type="application/json" id="initial-state">${stateJson}</script>
-<script>
-var vscode = acquireVsCodeApi();
-var S = JSON.parse(document.getElementById('initial-state').textContent);
+<script nonce="${nonce}">
+(function(){
+// =====================================================================
+// Phase 2: VS Code API
+// =====================================================================
+var rootEl = document.getElementById('root');
+var vscode;
+try {
+  vscode = acquireVsCodeApi();
+} catch(e) {
+  rootEl.innerHTML = '<div class="phase-err"><b>Phase 2 FAILED: acquireVsCodeApi</b>\\n\\n' + e + '\\n' + (e.stack||'') + '</div>';
+  return;
+}
+rootEl.innerHTML = '<div style="padding:40px 20px;opacity:.6">Phase 2 OK \u2014 VS Code API acquired. Parsing state\u2026</div>';
+
+// =====================================================================
+// Phase 3: Parse embedded state
+// =====================================================================
+var S;
+try {
+  S = JSON.parse(document.getElementById('initial-state').textContent);
+} catch(e) {
+  rootEl.innerHTML = '<div class="phase-err"><b>Phase 3 FAILED: JSON parse</b>\\n\\n' + e + '\\n' + (e.stack||'') + '</div>';
+  return;
+}
+rootEl.innerHTML = '<div style="padding:40px 20px;opacity:.6">Phase 3 OK \u2014 State loaded (' + (S.sounds||[]).length + ' sounds). Rendering\u2026</div>';
+
+// =====================================================================
+// Phase 4: Render engine (NO inline event handlers)
+// =====================================================================
 var col = {};
 
 function post(m){ vscode.postMessage(m); }
-function g(k,v){ post({type:'saveGlobal',key:k,value:v}); }
-function p(sid,k,v){ post({type:'savePerSound',soundId:sid,key:k,value:v}); }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function jstr(v){ return JSON.stringify(v); }
 
-function render(){
-  if(!S) return;
-  var sc=window.scrollY;
-  document.getElementById('root').innerHTML=buildAll();
-  window.scrollTo(0,sc);
+// Toggle switch — uses data-g / data-p attributes instead of inline onchange
+function sw(checked, attrs){
+  return '<label class="sw"><input type="checkbox"' + (checked ? ' checked' : '') + ' ' + attrs + '><span class="kn"></span></label>';
 }
-function sw(checked,onChange){
-  return '<label class="sw"><input type="checkbox"'+(checked?' checked':'')+' onchange="'+onChange+'"><span class="kn"></span></label>';
+// Slider — uses data attributes; value display updated via event delegation
+function sl(val, min, max, step, attrs){
+  var v = parseFloat(val).toFixed(2);
+  return '<div class="slr"><input type="range" min="'+min+'" max="'+max+'" step="'+step+'" value="'+val+'" '+attrs+'><span class="slv">'+v+'</span></div>';
 }
-function sl(val,min,max,step,onChange){
-  var v=parseFloat(val).toFixed(2);
-  return '<div class="slr"><input type="range" min="'+min+'" max="'+max+'" step="'+step+'" value="'+val+'" oninput="this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2);('+onChange+')(parseFloat(this.value))"><span class="slv">'+v+'</span></div>';
-}
-function row(lbl,ctrl,hint){
+function row(lbl, ctrl, hint){
   return '<div class="row"><label>'+lbl+'</label><div class="ctl">'+ctrl+(hint?' <span class="hint">'+hint+'</span>':'')+'</div></div>';
 }
-function sec(id,title,body){
-  var open=!col[id];
-  return '<div class="section"><div class="sh'+(open?' open':'')+'" onclick="toggleSec(\''+id+'\')"><h2>'+title+'</h2><span style="opacity:.4;font-size:10px">'+(open?'&#9650;':'&#9660;')+'</span></div>'+(open?'<div class="sb">'+body+'</div>':'')+'</div>';
+function sec(id, title, body){
+  var open = !col[id];
+  return '<div class="section"><div class="sh'+(open?' open':'')+'" data-toggle="'+id+'"><h2>'+title+'</h2><span style="opacity:.4;font-size:10px">'+(open?'&#9650;':'&#9660;')+'</span></div>'+(open?'<div class="sb">'+body+'</div>':'')+'</div>';
 }
+
 function buildAll(){
-  var gs=S.globalSettings;
-  var totalSounds=(S.errorSounds||[]).length+(S.successSounds||[]).length;
-  return buildHdr(gs)+
-    '<div class="main">'+
-    sec('gen','&#9881;&#65039; General',buildGeneral(gs))+
-    sec('trig','&#9889; Triggers',buildTriggers(gs))+
-    sec('snd','&#127925; Sound Library ('+totalSounds+' sounds)',buildSounds(gs))+
-    sec('det','&#128269; Error Detection',buildDetection(gs))+
-    sec('esc','&#128293; Escalation Mode',buildEscalation(gs))+
-    sec('dnd','&#127769; Do Not Disturb',buildDND(gs))+
-    sec('stat','&#128202; Stats',buildStats())+
+  var gs = S.globalSettings;
+  var totalSounds = (S.errorSounds||[]).length + (S.successSounds||[]).length;
+  return buildHdr(gs) +
+    '<div class="main">' +
+    sec('gen','&#9881;&#65039; General', buildGeneral(gs)) +
+    sec('trig','&#9889; Triggers', buildTriggers(gs)) +
+    sec('snd','&#127925; Sound Library (' + totalSounds + ' sounds)', buildSounds(gs)) +
+    sec('det','&#128269; Error Detection', buildDetection(gs)) +
+    sec('esc','&#128293; Escalation Mode', buildEscalation(gs)) +
+    sec('dnd','&#127769; Do Not Disturb', buildDND(gs)) +
+    sec('stat','&#128202; Stats', buildStats()) +
     '</div>';
 }
+
 function buildHdr(gs){
-  return '<header>'+
-    '<span style="font-size:18px">&#128266;</span>'+
-    '<h1>Error &amp; Success Reactor &#8212; Settings</h1>'+
-    '<span class="stl">'+S.stats.todayCount+' errors today &nbsp;|&nbsp; streak: '+S.stats.currentStreak+'</span>'+
-    sw(gs.enabled,"g('enabled',this.checked)")+
-    '<span class="sm-hint">'+(gs.enabled?'On':'Off')+'</span>'+
-    '<button class="sec sm" onclick="g(\'muted\','+(!gs.muted)+')">'+(gs.muted?'&#128266; Unmute':'&#128263; Mute')+'</button>'+
-    '<button class="sec sm" onclick="post({type:\'importSound\'})">+ Import MP3</button>'+
-    '<button class="sec sm" onclick="post({type:\'ready\'})" title="Refresh">&#8635;</button>'+
+  return '<header>' +
+    '<span style="font-size:18px">&#128266;</span>' +
+    '<h1>Error &amp; Success Reactor &#8212; Settings</h1>' +
+    '<span class="stl">' + S.stats.todayCount + ' errors today &nbsp;|&nbsp; streak: ' + S.stats.currentStreak + '</span>' +
+    sw(gs.enabled, 'data-g="enabled"') +
+    '<span class="sm-hint">' + (gs.enabled ? 'On' : 'Off') + '</span>' +
+    '<button class="sec sm" data-action="toggleMute">' + (gs.muted ? '&#128266; Unmute' : '&#128263; Mute') + '</button>' +
+    '<button class="sec sm" data-action="importSound">+ Import MP3</button>' +
+    '<button class="sec sm" data-action="refresh" title="Refresh">&#8635;</button>' +
     '</header>';
 }
+
 function buildGeneral(gs){
-  var errSounds=S.errorSounds||[];
-  var sucSounds=S.successSounds||[];
-  var aOpts=errSounds.map(function(s){return '<option value="'+esc(s.id)+'"'+(s.id===gs.activeSound?' selected':'')+'>'+esc(s.label)+'</option>';}).join('');
-  var sOpts='<option value=""'+(!gs.successSound?' selected':'')+'>Disabled</option>'+
-    sucSounds.map(function(s){return '<option value="'+esc(s.id)+'"'+(s.id===gs.successSound?' selected':'')+'>'+esc(s.label)+'</option>';}).join('');
-  return row('Error Sound','<select onchange="g(\'activeSound\',this.value)">'+aOpts+'</select>','Sound played on failed commands (from sounds/errors/)')+
-    row('Random Error Sound',sw(gs.randomErrorSound,"g('randomErrorSound',this.checked)"),'Pick a random enabled error sound on each error')+
-    '<hr class="sep">'+
-    row('Success Sound','<select onchange="g(\'successSound\',this.value)">'+sOpts+'</select>','Play on exit code 0 (from sounds/success/)')+
-    row('Random Success Sound',sw(gs.randomSuccessSound,"g('randomSuccessSound',this.checked)"),'Pick a random enabled success sound on each success')+
-    row('Success Cooldown',sl(gs.successCooldownSeconds,0,30,1,"function(v){g('successCooldownSeconds',v)}"),'Seconds between success triggers')+
-    '<hr class="sep">'+
-    row('Error Cooldown',sl(gs.cooldownSeconds,0,60,1,"function(v){g('cooldownSeconds',v)}"),'Seconds between error triggers (0=no limit)')+
-    row('Show Error Toast',sw(gs.showErrorToast,"g('showErrorToast',this.checked)"),'Notification popup after each sound')+
-    row('Funny Toasts',sw(gs.funnyToasts,"g('funnyToasts',this.checked)"),'Use funny randomized messages instead of plain info');
+  var errSounds = S.errorSounds || [];
+  var sucSounds = S.successSounds || [];
+  var aOpts = errSounds.map(function(s){ return '<option value="'+esc(s.id)+'"'+(s.id===gs.activeSound?' selected':'')+'>'+esc(s.label)+'</option>'; }).join('');
+  var sOpts = '<option value=""' + (!gs.successSound ? ' selected' : '') + '>Disabled</option>' +
+    sucSounds.map(function(s){ return '<option value="'+esc(s.id)+'"'+(s.id===gs.successSound?' selected':'')+'>'+esc(s.label)+'</option>'; }).join('');
+  return row('Error Sound', '<select data-g="activeSound">' + aOpts + '</select>', 'Sound played on failed commands (from sounds/errors/)') +
+    row('Random Error Sound', sw(gs.randomErrorSound, 'data-g="randomErrorSound"'), 'Pick a random enabled error sound on each error') +
+    '<hr class="sep">' +
+    row('Success Sound', '<select data-g="successSound">' + sOpts + '</select>', 'Play on exit code 0 (from sounds/success/)') +
+    row('Random Success Sound', sw(gs.randomSuccessSound, 'data-g="randomSuccessSound"'), 'Pick a random enabled success sound on each success') +
+    row('Success Cooldown', sl(gs.successCooldownSeconds, 0, 30, 1, 'data-g="successCooldownSeconds"'), 'Seconds between success triggers') +
+    '<hr class="sep">' +
+    row('Error Cooldown', sl(gs.cooldownSeconds, 0, 60, 1, 'data-g="cooldownSeconds"'), 'Seconds between error triggers (0=no limit)') +
+    row('Show Error Toast', sw(gs.showErrorToast, 'data-g="showErrorToast"'), 'Notification popup after each sound') +
+    row('Funny Toasts', sw(gs.funnyToasts, 'data-g="funnyToasts"'), 'Use funny randomized messages instead of plain info');
 }
+
 function buildTriggers(gs){
-  return row('Terminal Failures','<span class="sm-hint">Always on \u2014 core trigger</span>','Plays when a terminal command exits non-zero')+
-    '<hr class="sep">'+
-    row('Diagnostic Errors',sw(gs.playOnDiagnostics,"g('playOnDiagnostics',this.checked)"),'Plays when new red squiggly errors appear')+
-    row('Debounce (ms)',sl(gs.diagnosticDebounceMs,50,1000,10,"function(v){g('diagnosticDebounceMs',v)}"),'Wait time before checking (prevents spam)')+
-    '<hr class="sep">'+
-    row('Save with Errors',sw(gs.playOnSave,"g('playOnSave',this.checked)"),'Plays when you save a file that has errors')+
-    '<hr class="sep">'+
-    row('Task Failure',sw(gs.playOnTaskFailure,"g('playOnTaskFailure',this.checked)"),'Plays when a VS Code task process fails')+
-    '<hr class="sep">'+
-    row('Debug Session End',sw(gs.playOnDebuggerCrash,"g('playOnDebuggerCrash',this.checked)"),'Plays when a debug session terminates');
+  return row('Terminal Failures', '<span class="sm-hint">Always on \u2014 core trigger</span>', 'Plays when a terminal command exits non-zero') +
+    '<hr class="sep">' +
+    row('Diagnostic Errors', sw(gs.playOnDiagnostics, 'data-g="playOnDiagnostics"'), 'Plays when new red squiggly errors appear') +
+    row('Debounce (ms)', sl(gs.diagnosticDebounceMs, 50, 1000, 10, 'data-g="diagnosticDebounceMs"'), 'Wait time before checking (prevents spam)') +
+    '<hr class="sep">' +
+    row('Save with Errors', sw(gs.playOnSave, 'data-g="playOnSave"'), 'Plays when you save a file that has errors') +
+    '<hr class="sep">' +
+    row('Task Failure', sw(gs.playOnTaskFailure, 'data-g="playOnTaskFailure"'), 'Plays when a VS Code task process fails') +
+    '<hr class="sep">' +
+    row('Debug Session End', sw(gs.playOnDebuggerCrash, 'data-g="playOnDebuggerCrash"'), 'Plays when a debug session terminates');
 }
+
 function buildSounds(gs){
-  var errSounds=S.errorSounds||[];
-  var sucSounds=S.successSounds||[];
-  function buildSoundCards(sounds,category,activeKey){
-    if(!sounds.length) return '<div class="sm-hint" style="padding:6px 0">No .mp3 files found in sounds/'+category+'/. Import one to get started.</div>';
-    var activeVal=gs[activeKey]||'';
+  var errSounds = S.errorSounds || [];
+  var sucSounds = S.successSounds || [];
+  function cards(sounds, category, activeKey){
+    if (!sounds.length) return '<div class="sm-hint" style="padding:6px 0">No .mp3 files found in sounds/' + category + '/. Import one to get started.</div>';
+    var activeVal = gs[activeKey] || '';
     return sounds.map(function(s){
-      var ps=S.perSoundSettings[s.id]||{};
-      var isCur=s.id===activeVal;
-      var bdg=isCur?'<span class="bdg act">&#9679; active</span>':(ps.enabled!==false?'<span class="bdg">enabled</span>':'<span class="bdg off">disabled</span>');
-      var sid=esc(s.id);
-      var vol=ps.volume!==undefined?ps.volume:0.5;
-      var spd=ps.speed!==undefined?ps.speed:1;
-      var pch=ps.pitch!==undefined?ps.pitch:1;
-      return '<div class="sc'+(isCur?' cur':'')+'">'+
-        '<div class="sch"><span class="nm">'+esc(s.label)+'</span>'+bdg+'</div>'+
-        '<div class="scb">'+
-          '<div class="row"><label>Label</label><div class="ctl"><input type="text" value="'+esc(ps.customLabel||'')+'" placeholder="'+sid+'" onchange="p(\''+sid+'\',\'customLabel\',this.value)" style="width:100%"></div></div>'+
-          '<div class="row"><label>Volume</label><div class="ctl">'+sl(vol,0,1,0.01,"function(v){p('"+sid+"','volume',v)}")+'</div></div>'+
-          '<div class="row"><label>Speed</label><div class="ctl">'+sl(spd,0.5,4,0.05,"function(v){p('"+sid+"','speed',v)}")+'</div></div>'+
-          '<div class="row"><label>Pitch</label><div class="ctl">'+sl(pch,0.5,2,0.05,"function(v){p('"+sid+"','pitch',v)}")+'</div></div>'+
-          '<div class="row"><label>Reverse</label><div class="ctl">'+sw(!!ps.reversePlayback,"p('"+sid+"','reversePlayback',this.checked)")+' <span class="sm-hint">needs ffmpeg</span></div></div>'+
-          '<div class="row"><label>Enabled</label><div class="ctl">'+sw(ps.enabled!==false,"p('"+sid+"','enabled',this.checked)")+' <span class="sm-hint">in selector &amp; random mode</span></div></div>'+
-        '</div>'+
-        '<div class="scf">'+
-          '<button class="sm" onclick="post({type:\'testSound\',soundId:\''+sid+'\',category:\''+category+'\'})">&#9654; Test</button>'+
-          (!isCur?'<button class="sec sm" onclick="g(\''+activeKey+'\',\''+sid+'\')">Set as '+(category==='errors'?'Error':'Success')+' Sound</button>':'')+
-          '<button class="danger sm" onclick="post({type:\'deleteSound\',soundId:\''+sid+'\',category:\''+category+'\'})">&#128465; Delete</button>'+
-        '</div>'+
+      var ps = S.perSoundSettings[s.id] || {};
+      var isCur = s.id === activeVal;
+      var bdg = isCur ? '<span class="bdg act">&#9679; active</span>' : (ps.enabled !== false ? '<span class="bdg">enabled</span>' : '<span class="bdg off">disabled</span>');
+      var sid = esc(s.id);
+      var vol = ps.volume !== undefined ? ps.volume : 0.5;
+      var spd = ps.speed !== undefined ? ps.speed : 1;
+      var pch = ps.pitch !== undefined ? ps.pitch : 1;
+      return '<div class="sc' + (isCur ? ' cur' : '') + '">' +
+        '<div class="sch"><span class="nm">' + esc(s.label) + '</span>' + bdg + '</div>' +
+        '<div class="scb">' +
+          '<div class="row"><label>Label</label><div class="ctl"><input type="text" value="' + esc(ps.customLabel||'') + '" placeholder="' + sid + '" data-p="' + sid + '" data-pk="customLabel" style="width:100%"></div></div>' +
+          '<div class="row"><label>Volume</label><div class="ctl">' + sl(vol, 0, 1, 0.01, 'data-p="'+sid+'" data-pk="volume"') + '</div></div>' +
+          '<div class="row"><label>Speed</label><div class="ctl">' + sl(spd, 0.5, 4, 0.05, 'data-p="'+sid+'" data-pk="speed"') + '</div></div>' +
+          '<div class="row"><label>Pitch</label><div class="ctl">' + sl(pch, 0.5, 2, 0.05, 'data-p="'+sid+'" data-pk="pitch"') + '</div></div>' +
+          '<div class="row"><label>Reverse</label><div class="ctl">' + sw(!!ps.reversePlayback, 'data-p="'+sid+'" data-pk="reversePlayback"') + ' <span class="sm-hint">needs ffmpeg</span></div></div>' +
+          '<div class="row"><label>Enabled</label><div class="ctl">' + sw(ps.enabled !== false, 'data-p="'+sid+'" data-pk="enabled"') + ' <span class="sm-hint">in selector &amp; random mode</span></div></div>' +
+        '</div>' +
+        '<div class="scf">' +
+          '<button class="sm" data-action="testSound" data-sid="' + sid + '" data-cat="' + category + '">&#9654; Test</button>' +
+          (!isCur ? '<button class="sec sm" data-action="setActive" data-gkey="' + activeKey + '" data-gval="' + sid + '">Set as ' + (category==='errors' ? 'Error' : 'Success') + ' Sound</button>' : '') +
+          '<button class="danger sm" data-action="deleteSound" data-sid="' + sid + '" data-cat="' + category + '">&#128465; Delete</button>' +
+        '</div>' +
       '</div>';
     }).join('');
   }
-  return '<div class="ibar">'+
-    '<button onclick="post({type:\'importSound\'})">+ Import MP3 from disk</button>'+
-    '<span class="sm-hint">Choose a category (errors or success) when importing</span>'+
-    '</div>'+
-    '<h3 style="margin:12px 0 6px;opacity:.8">&#128680; Error Sounds ('+errSounds.length+')</h3>'+
-    '<div class="sgrid">'+buildSoundCards(errSounds,'errors','activeSound')+'</div>'+
-    '<h3 style="margin:18px 0 6px;opacity:.8">&#127881; Success Sounds ('+sucSounds.length+')</h3>'+
-    '<div class="sgrid">'+buildSoundCards(sucSounds,'success','successSound')+'</div>';
+  return '<div class="ibar">' +
+    '<button data-action="importSound">+ Import MP3 from disk</button>' +
+    '<span class="sm-hint">Choose a category (errors or success) when importing</span>' +
+    '</div>' +
+    '<h3 style="margin:12px 0 6px;opacity:.8">&#128680; Error Sounds (' + errSounds.length + ')</h3>' +
+    '<div class="sgrid">' + cards(errSounds, 'errors', 'activeSound') + '</div>' +
+    '<h3 style="margin:18px 0 6px;opacity:.8">&#127881; Success Sounds (' + sucSounds.length + ')</h3>' +
+    '<div class="sgrid">' + cards(sucSounds, 'success', 'successSound') + '</div>';
 }
+
 function buildDetection(gs){
-  var ptags=gs.errorPatterns.map(function(pt){
-    return '<span class="tag">'+esc(pt)+'<button onclick="post({type:\'removePattern\',pattern:'+jstr(pt)+'})" title="Remove">\xd7</button></span>';
+  var ptags = gs.errorPatterns.map(function(pt){
+    return '<span class="tag">' + esc(pt) + '<button data-action="removePattern" data-val="' + esc(pt) + '" title="Remove">\\xd7</button></span>';
   }).join('');
-  var ctags=gs.ignoredExitCodes.map(function(c){
-    return '<span class="tag">'+esc(c)+'<button onclick="post({type:\'removeIgnoredCode\',code:'+c+'})" title="Remove">\xd7</button></span>';
+  var ctags = gs.ignoredExitCodes.map(function(c){
+    return '<span class="tag">' + esc(c) + '<button data-action="removeIgnoredCode" data-val="' + c + '" title="Remove">\\xd7</button></span>';
   }).join('');
-  return row('Pattern Detection',sw(gs.errorPatternDetectionEnabled,"g('errorPatternDetectionEnabled',this.checked)"),'Trigger sound on error text even when exit code = 0')+
-    '<hr class="sep">'+
-    '<div class="rblk"><div class="lbl">Error Patterns (case-sensitive substring match)</div>'+
-    '<div class="tags">'+(ptags||'<span class="sm-hint">No patterns configured</span>')+'</div>'+
-    '<div class="addr"><input id="np" type="text" placeholder="e.g.  TypeError" onkeydown="if(event.key===\'Enter\')addPat()">'+
-    '<button class="sec sm" onclick="addPat()">Add</button></div></div>'+
-    '<hr class="sep">'+
-    '<div class="rblk"><div class="lbl">Ignored Exit Codes (skips exit-code triggers only \u2014 pattern matches still fire)</div>'+
-    '<div class="tags">'+(ctags||'<span class="sm-hint">None \u2014 all non-zero codes trigger the sound</span>')+'</div>'+
-    '<div class="addr"><input id="nc" type="number" placeholder="e.g.  1" style="width:70px" onkeydown="if(event.key===\'Enter\')addCode()">'+
-    '<button class="sec sm" onclick="addCode()">Add</button></div></div>';
+  return row('Pattern Detection', sw(gs.errorPatternDetectionEnabled, 'data-g="errorPatternDetectionEnabled"'), 'Trigger sound on error text even when exit code = 0') +
+    '<hr class="sep">' +
+    '<div class="rblk"><div class="lbl">Error Patterns (case-sensitive substring match)</div>' +
+    '<div class="tags">' + (ptags || '<span class="sm-hint">No patterns configured</span>') + '</div>' +
+    '<div class="addr"><input id="np" type="text" placeholder="e.g.  TypeError">' +
+    '<button class="sec sm" data-action="addPattern">Add</button></div></div>' +
+    '<hr class="sep">' +
+    '<div class="rblk"><div class="lbl">Ignored Exit Codes (skips exit-code triggers only \u2014 pattern matches still fire)</div>' +
+    '<div class="tags">' + (ctags || '<span class="sm-hint">None \u2014 all non-zero codes trigger the sound</span>') + '</div>' +
+    '<div class="addr"><input id="nc" type="number" placeholder="e.g.  1" style="width:70px">' +
+    '<button class="sec sm" data-action="addIgnoredCode">Add</button></div></div>';
 }
+
 function buildEscalation(gs){
-  return row('Enabled',sw(gs.escalationEnabled,"g('escalationEnabled',this.checked)"),'Auto-boost volume &amp; speed as error streak grows')+
-    row('Threshold',sl(gs.escalationThreshold,1,20,1,"function(v){g('escalationThreshold',v)}"),'Streak count before escalation starts')+
-    row('Volume Boost / Tier',sl(gs.escalationVolumeBoost,0,0.5,0.01,"function(v){g('escalationVolumeBoost',v)}"),'Volume added per tier above threshold')+
-    row('Speed Boost / Tier',sl(gs.escalationSpeedBoost,0,1,0.05,"function(v){g('escalationSpeedBoost',v)}"),'Speed added per tier above threshold');
+  return row('Enabled', sw(gs.escalationEnabled, 'data-g="escalationEnabled"'), 'Auto-boost volume &amp; speed as error streak grows') +
+    row('Threshold', sl(gs.escalationThreshold, 1, 20, 1, 'data-g="escalationThreshold"'), 'Streak count before escalation starts') +
+    row('Volume Boost / Tier', sl(gs.escalationVolumeBoost, 0, 0.5, 0.01, 'data-g="escalationVolumeBoost"'), 'Volume added per tier above threshold') +
+    row('Speed Boost / Tier', sl(gs.escalationSpeedBoost, 0, 1, 0.05, 'data-g="escalationSpeedBoost"'), 'Speed added per tier above threshold');
 }
+
 function buildDND(gs){
-  var dndOn=isDNDActive(gs);
-  return row('Enabled',sw(gs.doNotDisturbEnabled,"g('doNotDisturbEnabled',this.checked)"),'Suppress sounds during defined hours')+
-    row('Start Time','<input type="text" value="'+esc(gs.doNotDisturbStart)+'" placeholder="23:00" style="width:70px" onchange="g(\'doNotDisturbStart\',this.value)">','24h HH:MM')+
-    row('End Time','<input type="text" value="'+esc(gs.doNotDisturbEnd)+'" placeholder="08:00" style="width:70px" onchange="g(\'doNotDisturbEnd\',this.value)">','24h HH:MM')+
-    (gs.doNotDisturbEnabled?'<div class="'+(dndOn?'dnd-on':'dnd-off')+'">'+(dndOn?'&#9679; DND active \u2014 sounds are suppressed':'&#9679; DND inactive \u2014 sounds play normally')+'</div>':'');
+  var dndOn = isDNDActive(gs);
+  return row('Enabled', sw(gs.doNotDisturbEnabled, 'data-g="doNotDisturbEnabled"'), 'Suppress sounds during defined hours') +
+    row('Start Time', '<input type="text" value="' + esc(gs.doNotDisturbStart) + '" placeholder="23:00" style="width:70px" data-g="doNotDisturbStart">', '24h HH:MM') +
+    row('End Time', '<input type="text" value="' + esc(gs.doNotDisturbEnd) + '" placeholder="08:00" style="width:70px" data-g="doNotDisturbEnd">', '24h HH:MM') +
+    (gs.doNotDisturbEnabled ? '<div class="' + (dndOn ? 'dnd-on' : 'dnd-off') + '">' + (dndOn ? '&#9679; DND active \u2014 sounds are suppressed' : '&#9679; DND inactive \u2014 sounds play normally') + '</div>' : '');
 }
+
 function buildStats(){
-  var st=S.stats.allStats,rows='';
-  for(var i=6;i>=0;i--){
-    var d=new Date();d.setDate(d.getDate()-i);
-    var k=d.toISOString().slice(0,10);
-    var lbl=i===0?'Today':i===1?'Yesterday':d.toLocaleDateString(undefined,{weekday:'short'});
-    rows+='<tr><td>'+lbl+'</td><td style="opacity:.6">'+k+'</td><td>'+(st[k]||'\u2014')+'</td></tr>';
+  var st = S.stats.allStats, rows = '';
+  for (var i = 6; i >= 0; i--){
+    var d = new Date(); d.setDate(d.getDate() - i);
+    var k = d.toISOString().slice(0, 10);
+    var lbl = i === 0 ? 'Today' : i === 1 ? 'Yesterday' : d.toLocaleDateString(undefined, {weekday:'short'});
+    rows += '<tr><td>' + lbl + '</td><td style="opacity:.6">' + k + '</td><td>' + (st[k] || '\u2014') + '</td></tr>';
   }
-  return '<div class="statg">'+
-    '<div class="statc"><div class="v">'+S.stats.todayCount+'</div><div class="k">Errors today</div></div>'+
-    '<div class="statc"><div class="v">'+S.stats.currentStreak+'</div><div class="k">Current streak</div></div>'+
-    '<div class="statc"><div class="v">'+S.stats.lifetimeScreams+'</div><div class="k">Lifetime screams</div></div>'+
-    '</div>'+
-    '<table class="st"><thead><tr><th>Day</th><th>Date</th><th>Errors triggered</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  return '<div class="statg">' +
+    '<div class="statc"><div class="v">' + S.stats.todayCount + '</div><div class="k">Errors today</div></div>' +
+    '<div class="statc"><div class="v">' + S.stats.currentStreak + '</div><div class="k">Current streak</div></div>' +
+    '<div class="statc"><div class="v">' + S.stats.lifetimeScreams + '</div><div class="k">Lifetime screams</div></div>' +
+    '</div>' +
+    '<table class="st"><thead><tr><th>Day</th><th>Date</th><th>Errors triggered</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
+
 function isDNDActive(gs){
-  if(!gs.doNotDisturbEnabled) return false;
-  var now=new Date(),nm=now.getHours()*60+now.getMinutes();
-  var sp=gs.doNotDisturbStart.split(':').map(Number),ep=gs.doNotDisturbEnd.split(':').map(Number);
-  var sm=sp[0]*60+(sp[1]||0),em=ep[0]*60+(ep[1]||0);
-  return sm<=em?(nm>=sm&&nm<em):(nm>=sm||nm<em);
+  if (!gs.doNotDisturbEnabled) return false;
+  var now = new Date(), nm = now.getHours() * 60 + now.getMinutes();
+  var sp = gs.doNotDisturbStart.split(':').map(Number), ep = gs.doNotDisturbEnd.split(':').map(Number);
+  var sm = sp[0] * 60 + (sp[1]||0), em = ep[0] * 60 + (ep[1]||0);
+  return sm <= em ? (nm >= sm && nm < em) : (nm >= sm || nm < em);
 }
-function toggleSec(id){ col[id]=!col[id]; render(); }
-function addPat(){ var el=document.getElementById('np'); if(el&&el.value.trim()){ post({type:'addPattern',pattern:el.value.trim()}); el.value=''; } }
-function addCode(){ var el=document.getElementById('nc'); if(el&&el.value.trim()){ post({type:'addIgnoredCode',code:parseInt(el.value.trim())}); el.value=''; } }
-window.addEventListener('message',function(ev){
-  if(ev.data.type==='state'){
-    S=ev.data.data;
-    try{ render(); }
-    catch(e){ document.getElementById('root').innerHTML='<div style="padding:20px;color:#e05252;font-family:monospace;font-size:12px"><b>Render error:</b><br><br>'+String(e)+'<br><br>'+(e.stack||'')+'</div>'; }
+
+function render(){
+  if (!S) return;
+  var sc = window.scrollY;
+  rootEl.innerHTML = buildAll();
+  window.scrollTo(0, sc);
+}
+
+try {
+  render();
+} catch(e) {
+  rootEl.innerHTML = '<div class="phase-err"><b>Phase 4 FAILED: render</b>\\n\\n' + e + '\\n' + (e.stack||'') + '</div>';
+  return;
+}
+
+// =====================================================================
+// Phase 5: Event delegation (all interactivity wired here)
+// =====================================================================
+
+// --- Click handler (buttons, section toggles) ---
+document.addEventListener('click', function(ev){
+  // Section toggle
+  var togEl = ev.target.closest('[data-toggle]');
+  if (togEl) {
+    col[togEl.dataset.toggle] = !col[togEl.dataset.toggle];
+    render();
+    return;
+  }
+
+  // Action buttons
+  var actEl = ev.target.closest('[data-action]');
+  if (actEl) {
+    var action = actEl.dataset.action;
+    if (action === 'importSound') { post({type:'importSound'}); }
+    else if (action === 'refresh') { post({type:'ready'}); }
+    else if (action === 'toggleMute') { post({type:'saveGlobal', key:'muted', value:!S.globalSettings.muted}); }
+    else if (action === 'testSound') { post({type:'testSound', soundId:actEl.dataset.sid, category:actEl.dataset.cat}); }
+    else if (action === 'deleteSound') { post({type:'deleteSound', soundId:actEl.dataset.sid, category:actEl.dataset.cat}); }
+    else if (action === 'setActive') { post({type:'saveGlobal', key:actEl.dataset.gkey, value:actEl.dataset.gval}); }
+    else if (action === 'addPattern') {
+      var np = document.getElementById('np');
+      if (np && np.value.trim()) { post({type:'addPattern', pattern:np.value.trim()}); np.value = ''; }
+    }
+    else if (action === 'addIgnoredCode') {
+      var nc = document.getElementById('nc');
+      if (nc && nc.value.trim()) { post({type:'addIgnoredCode', code:parseInt(nc.value.trim())}); nc.value = ''; }
+    }
+    else if (action === 'removePattern') { post({type:'removePattern', pattern:actEl.dataset.val}); }
+    else if (action === 'removeIgnoredCode') { post({type:'removeIgnoredCode', code:parseInt(actEl.dataset.val)}); }
+    return;
   }
 });
-// Render immediately from the state embedded at HTML-build time.
-// The message listener above handles live updates after settings are saved.
-try{ render(); }
-catch(e){ document.getElementById('root').innerHTML='<div style="padding:20px;color:#e05252;font-family:monospace;font-size:12px"><b>Render error:</b><br><br>'+String(e)+'<br><br>'+(e.stack||'')+'</div>'; }
-</script></body></html>`;
+
+// --- Change handler (checkboxes, selects, text inputs with data-g/data-p) ---
+document.addEventListener('change', function(ev){
+  var el = ev.target;
+  // Global setting
+  if (el.dataset.g) {
+    var val;
+    if (el.type === 'checkbox') val = el.checked;
+    else val = el.value;
+    post({type:'saveGlobal', key:el.dataset.g, value:val});
+    return;
+  }
+  // Per-sound setting (text input change, checkbox)
+  if (el.dataset.p && el.dataset.pk) {
+    var val;
+    if (el.type === 'checkbox') val = el.checked;
+    else val = el.value;
+    post({type:'savePerSound', soundId:el.dataset.p, key:el.dataset.pk, value:val});
+    return;
+  }
+});
+
+// --- Input handler (range sliders — live value display + save) ---
+document.addEventListener('input', function(ev){
+  var el = ev.target;
+  if (el.type === 'range') {
+    // Update display value next to slider
+    var disp = el.nextElementSibling;
+    if (disp && disp.classList.contains('slv')) {
+      disp.textContent = parseFloat(el.value).toFixed(2);
+    }
+    // Save global setting
+    if (el.dataset.g) {
+      post({type:'saveGlobal', key:el.dataset.g, value:parseFloat(el.value)});
+    }
+    // Save per-sound setting — pass noRefresh:true so the extension saves
+    // without posting a full state refresh back. Re-render happens on the
+    // 'change' event (fires on mouseup) via the change handler below,
+    // preventing the DOM from being destroyed while the slider is still
+    // being dragged (which caused settings to appear not to stick).
+    if (el.dataset.p && el.dataset.pk) {
+      post({type:'savePerSound', soundId:el.dataset.p, key:el.dataset.pk, value:parseFloat(el.value), noRefresh:true});
+    }
+  }
+});
+
+// --- Keydown handler (Enter key on pattern/code inputs) ---
+document.addEventListener('keydown', function(ev){
+  if (ev.key !== 'Enter') return;
+  if (ev.target.id === 'np') {
+    var inp = ev.target;
+    if (inp.value.trim()) { post({type:'addPattern', pattern:inp.value.trim()}); inp.value = ''; }
+  }
+  if (ev.target.id === 'nc') {
+    var inp = ev.target;
+    if (inp.value.trim()) { post({type:'addIgnoredCode', code:parseInt(inp.value.trim())}); inp.value = ''; }
+  }
+});
+
+// --- Incoming state updates from extension host ---
+window.addEventListener('message', function(ev){
+  if (ev.data && ev.data.type === 'state') {
+    S = ev.data.data;
+    try { render(); }
+    catch(e) { rootEl.innerHTML = '<div class="phase-err"><b>Re-render FAILED</b>\\n\\n' + e + '\\n' + (e.stack||'') + '</div>'; }
+  }
+});
+
+})();
+</script>
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------

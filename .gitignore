@@ -13,3 +13,6 @@ CLAUDE.md
 
 # VS Code local IDE config — machine-specific, not for contributors
 .vscode/
+
+# VSIX packages at the root (built artifacts belong in builds/)
+*.vsix

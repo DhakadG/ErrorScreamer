@@ -770,31 +770,36 @@ test("is a function", () => {
 test("returns valid HTML string", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.strictEqual(typeof html, "string");
   assert.ok(html.includes("<!DOCTYPE html>"), "Should start with DOCTYPE");
   assert.ok(html.includes("</html>"), "Should end with closing html tag");
 });
 
-test("CSP uses unsafe-inline for script-src (not nonce) to allow inline event handlers", () => {
+test("CSP uses nonce for script-src with event delegation (no inline handlers)", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
-  assert.ok(html.includes("script-src 'unsafe-inline'"), "CSP must allow unsafe-inline for inline onclick/onchange handlers");
-  assert.ok(!html.includes("script-src 'nonce-"), "CSP must NOT use nonce (blocks inline event handlers)");
+  const html = t.buildSettingsPanelHtml(state, "testnonce123");
+  assert.ok(html.includes("script-src 'nonce-testnonce123'"), "CSP must use nonce-based script-src");
+  assert.ok(html.includes('nonce="testnonce123"'), "Script tag must carry matching nonce attribute");
+  // Must NOT have inline event handlers (onclick=, onchange=, oninput=, onkeydown=)
+  assert.ok(!html.includes(' onclick='), "Must NOT use inline onclick handlers (blocked by nonce CSP)");
+  assert.ok(!html.includes(' onchange='), "Must NOT use inline onchange handlers (blocked by nonce CSP)");
+  assert.ok(!html.includes(' oninput='), "Must NOT use inline oninput handlers (blocked by nonce CSP)");
+  assert.ok(!html.includes(' onkeydown='), "Must NOT use inline onkeydown handlers (blocked by nonce CSP)");
 });
 
 test("CSP allows inline styles", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.ok(html.includes("style-src 'unsafe-inline'"), "CSP should allow inline styles");
 });
 
 test("embeds initial state as JSON data block", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.ok(html.includes('id="initial-state"'), "Should embed state in a script tag with id initial-state");
   assert.ok(html.includes('type="application/json"'), "State block should be non-executable JSON type");
 });
@@ -802,14 +807,14 @@ test("embeds initial state as JSON data block", () => {
 test("contains acquireVsCodeApi call", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.ok(html.includes("acquireVsCodeApi"), "Should call acquireVsCodeApi for webview messaging");
 });
 
 test("contains all major settings sections", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.ok(html.includes("General"), "Should have General section");
   assert.ok(html.includes("Triggers"), "Should have Triggers section");
   assert.ok(html.includes("Sound Library"), "Should have Sound Library section");
@@ -818,18 +823,20 @@ test("contains all major settings sections", () => {
   assert.ok(html.includes("Stats"), "Should have Stats section");
 });
 
-test("contains interactive controls (onclick, onchange)", () => {
+test("contains data-attribute event delegation controls", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
-  assert.ok(html.includes("onchange="), "Should have onchange handlers for toggles/inputs");
-  assert.ok(html.includes("onclick="), "Should have onclick handlers for buttons");
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
+  assert.ok(html.includes('data-g='), "Should have data-g attributes for global settings");
+  assert.ok(html.includes('data-action='), "Should have data-action attributes for buttons");
+  assert.ok(html.includes('data-toggle='), "Should have data-toggle attributes for collapsible sections");
+  assert.ok(html.includes('addEventListener'), "Should use addEventListener for event delegation");
 });
 
 test("renders error sound cards when sounds exist", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   // We know aahh.mp3 exists from earlier tests
   assert.ok(html.includes("Aahh") || html.includes("aahh"), "Should render aahh sound card");
 });
@@ -838,7 +845,7 @@ test("escapes </script> in embedded JSON to prevent premature tag close", () => 
   // Create a state with a string that contains </script>
   const state = t.getFullSettingsState();
   state.globalSettings.activeSound = "test</script><script>alert(1)";
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.ok(!html.includes("</script><script>alert"), "Must escape </script> in embedded JSON");
 });
 
@@ -1018,7 +1025,7 @@ test("getFullSettingsState includes successCooldownSeconds", () => {
 test("settings panel HTML contains success cooldown control", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   assert.ok(html.includes("successCooldownSeconds"), "Webview should have successCooldownSeconds control");
   assert.ok(html.includes("Success Cooldown"), "Webview should label the success cooldown setting");
 });
@@ -1031,7 +1038,7 @@ suite("Settings panel — state round-trip");
 test("embedded state can be parsed back from HTML", () => {
   t.invalidateSoundCache();
   const state = t.getFullSettingsState();
-  const html = t.buildSettingsPanelHtml(state);
+  const html = t.buildSettingsPanelHtml(state, "testnonce");
   // Extract JSON from <script type="application/json" id="initial-state">...</script>
   const match = html.match(/<script type="application\/json" id="initial-state">([\s\S]*?)<\/script>/);
   assert.ok(match, "Should find embedded state JSON in HTML");
