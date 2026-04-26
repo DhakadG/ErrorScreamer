@@ -10,7 +10,7 @@
 [![Version](https://img.shields.io/badge/version-2.3.0-orange?style=flat-square)](https://github.com/DhakadG/ErrorScreamer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)](LICENSE.md)
 [![Tests](https://img.shields.io/badge/tests-130%2F130%20passing-brightgreen?style=flat-square)](#)
-[![VSIX Size](https://img.shields.io/badge/VSIX-~400%20KB-blue?style=flat-square)](#)
+[![VSIX Size](https://img.shields.io/badge/VSIX-5.7%20MB-blue?style=flat-square)](#)
 
 ---
 
@@ -330,7 +330,7 @@ npm install -g @vscode/vsce
 vsce package --out builds/
 ```
 
-VSIX is ~400 KB — only `sound-play` is bundled, devDependencies are excluded.
+VSIX is ~5.7 MB — includes 52 error sounds and 15 success sounds. Only `sound-play` is bundled from node_modules; devDependencies are excluded.
 
 ---
 
