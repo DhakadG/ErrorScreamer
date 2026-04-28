@@ -1137,10 +1137,8 @@ function isDoNotDisturbActive() {
 
   // Validate parsed values — malformed config (e.g. "morning", "25:00") produces NaN,
   // which causes all comparisons to silently return false, wrongly disabling DND.
-  const validStart = Number.isFinite(startH) && startH >= 0 && startH <= 23 &&
-                     Number.isFinite(startM) && startM >= 0 && startM <= 59;
-  const validEnd   = Number.isFinite(endH)   && endH   >= 0 && endH   <= 23 &&
-                     Number.isFinite(endM)    && endM   >= 0 && endM   <= 59;
+  const validStart = Number.isFinite(startH) && startH >= 0 && startH <= 23 && Number.isFinite(startM) && startM >= 0 && startM <= 59;
+  const validEnd = Number.isFinite(endH) && endH >= 0 && endH <= 23 && Number.isFinite(endM) && endM >= 0 && endM <= 59;
   if (!validStart || !validEnd) {
     console.warn("Error & Success Reactor: malformed DND time config — DND disabled.");
     return false;
@@ -1249,9 +1247,7 @@ function recordErrorOccurredToday() {
       const stats = extensionCtx.globalState.get(DAILY_STATS_KEY, {});
       const today = getTodayDateString();
       stats[today] = (stats[today] || 0) + count;
-      await extensionCtx.globalState.update(DAILY_STATS_KEY, stats).catch(
-        (err) => console.error("Error & Success Reactor: failed to update daily stats:", err)
-      );
+      await extensionCtx.globalState.update(DAILY_STATS_KEY, stats).catch((err) => console.error("Error & Success Reactor: failed to update daily stats:", err));
     });
   }
 }
@@ -1367,7 +1363,40 @@ function openSettingsPanel() {
     initialState = getFullSettingsState();
   } catch (err) {
     console.error("Error & Success Reactor: failed to build initial settings state:", err);
-    initialState = { globalSettings: { enabled: true, muted: false, activeSound: "aahh", successSound: "mission-passed", randomErrorSound: false, randomSuccessSound: false, cooldownSeconds: 3, successCooldownSeconds: 5, showErrorToast: false, funnyToasts: true, playOnDiagnostics: true, playOnSave: true, playOnTaskFailure: true, playOnDebuggerCrash: true, diagnosticDebounceMs: 150, doNotDisturbEnabled: false, doNotDisturbStart: "23:00", doNotDisturbEnd: "08:00", escalationEnabled: false, escalationThreshold: 3, escalationVolumeBoost: 0.2, escalationSpeedBoost: 0.3, errorPatternDetectionEnabled: false, errorPatterns: [], ignoredExitCodes: [] }, errorSounds: [], successSounds: [], sounds: [], perSoundSettings: {}, stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} } };
+    initialState = {
+      globalSettings: {
+        enabled: true,
+        muted: false,
+        activeSound: "aahh",
+        successSound: "mission-passed",
+        randomErrorSound: false,
+        randomSuccessSound: false,
+        cooldownSeconds: 3,
+        successCooldownSeconds: 5,
+        showErrorToast: false,
+        funnyToasts: true,
+        playOnDiagnostics: true,
+        playOnSave: true,
+        playOnTaskFailure: true,
+        playOnDebuggerCrash: true,
+        diagnosticDebounceMs: 150,
+        doNotDisturbEnabled: false,
+        doNotDisturbStart: "23:00",
+        doNotDisturbEnd: "08:00",
+        escalationEnabled: false,
+        escalationThreshold: 3,
+        escalationVolumeBoost: 0.2,
+        escalationSpeedBoost: 0.3,
+        errorPatternDetectionEnabled: false,
+        errorPatterns: [],
+        ignoredExitCodes: [],
+      },
+      errorSounds: [],
+      successSounds: [],
+      sounds: [],
+      perSoundSettings: {},
+      stats: { todayCount: 0, currentStreak: 0, lifetimeScreams: 0, allStats: {} },
+    };
   }
   panel.webview.html = buildSettingsPanelHtml(initialState, nonce);
 
@@ -2395,9 +2424,17 @@ if (process.env.VSCODE_UNIT_TEST === "1") {
       return getLifetimeScreamCount();
     },
     // Settable state for test setup
-    get currentErrorStreak() { return currentErrorStreak; },
-    set currentErrorStreak(v) { currentErrorStreak = v; },
-    get lastErrorSoundPlayedAt() { return lastErrorSoundPlayedAt; },
-    set lastErrorSoundPlayedAt(v) { lastErrorSoundPlayedAt = v; },
+    get currentErrorStreak() {
+      return currentErrorStreak;
+    },
+    set currentErrorStreak(v) {
+      currentErrorStreak = v;
+    },
+    get lastErrorSoundPlayedAt() {
+      return lastErrorSoundPlayedAt;
+    },
+    set lastErrorSoundPlayedAt(v) {
+      lastErrorSoundPlayedAt = v;
+    },
   };
 }
