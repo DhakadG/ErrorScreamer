@@ -10,7 +10,8 @@
 [![Version](https://img.shields.io/badge/version-2.3.0-orange?style=flat-square)](https://github.com/DhakadG/ErrorScreamer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)](LICENSE.md)
 [![Tests](https://img.shields.io/badge/tests-130%2F130%20passing-brightgreen?style=flat-square)](#)
-[![VSIX Size](https://img.shields.io/badge/VSIX-5.7%20MB-blue?style=flat-square)](#)
+[![Sound Library](https://img.shields.io/badge/Sounds-52%20Error%20%2B%2015%20Success-purple?style=flat-square)](#-audio-library)
+[![VSIX Size](https://img.shields.io/badge/VSIX-5.7%20MB-blue?style=flat-square)](#-packaging)
 
 ---
 
@@ -198,6 +199,34 @@ sounds/
 
 ---
 
+## 🎶 Audio Library — 67 Sounds Total
+
+### Error Sounds (52 total)
+
+**v2.3.0 Additions:**
+- `ultrakill-explosion` — epic explosion effect
+- `ankle-breakage` — bone-crunching sound
+- `core-sound-effect` — sci-fi core blast
+- `critical-hit-sounds-effect` — gaming critical hit
+- `weird-smoosh-effect` — abstract error squelch
+- `makabhosda-aag` — Indian comedy meme
+
+**Complete Error Sound Library:**
+Includes everything from meme classics (vine-boom, "daddyy chill", "why are you running") to emergency alerts (ambulance siren, undertaker's bell), comedy sounds (crickets chirping, cartoon elements), and new v2.3.0 effects for extra chaos.
+
+### Success Sounds (15 total)
+
+**v2.3.0 Additions:**
+- `cartel-song` — iconic cartel victory theme
+- `fast-and-furious-tokyo-drift` — drift mode celebration
+- `tu-tu-tu-du-max-verstappen` — F1 victory anthem
+- `white-tee-rizz` — confidence boost vibes
+
+**Complete Success Sound Library:**
+From mission-passed classics to crowd cheers, phonk vibes, and anime celebrations — every code victory deserves recognition.
+
+---
+
 ### 📊 Stats & Counters
 
 - **Status bar** (bottom-right) — shows current streak, mute state, escalation tier
@@ -330,7 +359,18 @@ npm install -g @vscode/vsce
 vsce package --out builds/
 ```
 
-VSIX is ~5.7 MB — includes 52 error sounds and 15 success sounds. Only `sound-play` is bundled from node_modules; devDependencies are excluded.
+**VSIX Size Breakdown (5.7 MB):**
+
+The extension ships with a comprehensive audio library to ensure out-of-the-box entertainment:
+
+| Component | Size | Purpose |
+|---|---|---|
+| **Error Sounds (52 files)** | ~4.2 MB | Diverse error reactions: memes, effects, alarms, comedy |
+| **Success Sounds (15 files)** | ~1.1 MB | Victory celebrations: anime, music, crowd cheers |
+| **Core Code + Dependencies** | ~0.3 MB | `sound-play` npm + extension logic |
+| **Metadata & Assets** | ~0.1 MB | Icons, badges, config files |
+
+**Why so many sounds?** No two debugging sessions are alike. Our curated library balances hilarity with audio variety — from trending memes to epic sound effects — so users never get tired of the scream. Each sound is MP3-compressed for delivery efficiency while maintaining quality for immediate playback.
 
 ---
 
